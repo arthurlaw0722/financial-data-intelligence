@@ -17,6 +17,11 @@ from agent.readiness import assess_readiness
 from analytics.profiler import profile_dataset
 from analytics.target_analysis import analyze_target
 from analytics.ml_pipeline import train_binary_models, model_comparison_table
+from analytics.financial_intelligence import analyze_financial_intelligence
+from analytics.financial_statement_adapter import (
+    detect_financial_statement_schema,
+    prepare_financial_periods,
+)
 from analytics.statistics import (
     numeric_statistics,
     categorical_statistics,
@@ -198,9 +203,36 @@ def render_configuration():
                 key="target_column_selector",
             )
 
+        if uploaded_file is not None:
+            current_name_signature = uploaded_file_signature(uploaded_file)
+
+            if (
+                st.session_state.get("dataset_name_file_signature")
+                != current_name_signature
+            ):
+                file_stem = os.path.splitext(uploaded_file.name)[0]
+
+                special_dataset_names = {
+                    "creditcard": "Credit Card Fraud Detection",
+                    "financial_statement_demo": "Financial Statement Demo",
+                }
+
+                suggested_name = special_dataset_names.get(
+                    file_stem.lower(),
+                    file_stem.replace("_", " ").replace("-", " ").title(),
+                )
+
+                st.session_state["dataset_name_input"] = suggested_name
+                st.session_state["dataset_name_file_signature"] = (
+                    current_name_signature
+                )
+
+        elif "dataset_name_input" not in st.session_state:
+            st.session_state["dataset_name_input"] = ""
+
         dataset_name = st.text_input(
             "Dataset name",
-            value="Credit Card Fraud Detection",
+            key="dataset_name_input",
         )
 
     return uploaded_file, df, dataset_profile, target_column, dataset_name
@@ -790,6 +822,223 @@ def render_getting_started():
 
 
 
+def render_financial_intelligence(
+    uploaded_file,
+    df,
+    target_column,
+    dataset_name,
+):
+    """Render financial-statement intelligence and analyst review signals."""
+
+    st.subheader("Financial Intelligence")
+    st.caption(
+        "Translate verified financial-statement data into accounting, "
+        "working-capital, earnings-quality, and liquidity signals."
+    )
+
+    current_verification_signature = (
+        uploaded_file_signature(uploaded_file),
+        target_column,
+        dataset_name,
+    )
+
+    verification_result = st.session_state.get("verification_result")
+    verification_signature = st.session_state.get("verification_signature")
+
+    if (
+        verification_result is None
+        or verification_signature != current_verification_signature
+    ):
+        st.warning(
+            "**Verification required**\n\n"
+            "Run Verification before using Financial Intelligence for "
+            "this dataset."
+        )
+        return
+
+    leakage_count = (
+        verification_result
+        .get("leakage", {})
+        .get("risk_count", 0)
+    )
+
+    if leakage_count > 0:
+        st.error(
+            "Financial Intelligence is blocked because Verification "
+            "detected possible target leakage."
+        )
+        return
+
+    schema = detect_financial_statement_schema(df)
+
+    if not schema["is_financial_statement"]:
+        st.info(
+            "**Financial statement analysis is not applicable to this dataset.**\n\n"
+            "This dataset does not match the standardized multi-period "
+            "financial-statement structure. Transaction-level or modelling "
+            "datasets can still use Verification and Machine Learning."
+        )
+
+        with st.expander("Expected financial statement format"):
+            st.markdown(
+                """
+A compatible dataset should contain:
+
+- a `period` column with at least two reporting dates
+- at least five recognised financial statement metrics
+- one row per reporting period
+
+Examples of recognised metrics include `revenue`,
+`accounts_receivable`, `inventory`, `net_income`,
+`operating_cash_flow`, `total_assets`, `total_liabilities`,
+`total_equity`, `current_assets`, `current_liabilities`,
+`total_debt`, and `cash_and_equivalents`.
+                """
+            )
+
+            detected = schema.get("available_metrics", [])
+
+            if detected:
+                st.caption(
+                    "Recognised financial metrics detected: "
+                    + ", ".join(detected)
+                )
+            else:
+                st.caption(
+                    "No recognised financial-statement metrics were detected."
+                )
+
+        return
+
+    try:
+        periods = prepare_financial_periods(df)
+
+        result = analyze_financial_intelligence(
+            current=periods["current"],
+            previous=periods["previous"],
+        )
+
+    except ValueError as exc:
+        st.error(str(exc))
+        return
+
+    st.markdown("### Overall Assessment")
+
+    decision = result["decision"]
+    summary = result["summary"]
+
+    if decision == "HIGH ATTENTION":
+        st.error(f"**{decision}** — {summary}")
+    elif decision == "REVIEW REQUIRED":
+        st.warning(f"**{decision}** — {summary}")
+    else:
+        st.success(f"**{decision}** — {summary}")
+
+    status_counts = result["status_counts"]
+    review_count = (
+        status_counts.get("Review", 0)
+        + status_counts.get("High Attention", 0)
+    )
+
+    summary_col1, summary_col2, summary_col3 = st.columns(3)
+
+    summary_col1.metric(
+        "Period Comparison",
+        f"{periods['previous_period']} → {periods['current_period']}",
+    )
+    summary_col2.metric(
+        "Financial Metrics",
+        len(periods["available_metrics"]),
+    )
+    summary_col3.metric(
+        "Signals Requiring Review",
+        review_count,
+    )
+
+    st.markdown("### Financial Signals")
+
+    signals = result["signals"]
+    signal_columns = st.columns(len(signals))
+
+    for column, signal in zip(signal_columns, signals):
+        column.metric(
+            signal["area"],
+            signal["status"],
+        )
+
+    flagged_signals = [
+        signal
+        for signal in signals
+        if signal["status"] != "Normal"
+    ]
+
+    st.markdown("### Analyst Brief")
+
+    if flagged_signals:
+        analyst_brief = " ".join(
+            signal["interpretation"]
+            for signal in flagged_signals
+        )
+        st.write(analyst_brief)
+    else:
+        st.write(
+            "No material financial signals were identified under the "
+            "current analytical rules."
+        )
+
+    st.markdown("### Review Details")
+
+    for signal in signals:
+        label = f"{signal['area']} — {signal['status']}"
+
+        with st.expander(label):
+            st.markdown("**Why it matters**")
+            st.write(signal["interpretation"])
+
+            st.markdown("**What to investigate**")
+            st.write(signal["analyst_action"])
+
+            metrics = signal.get("metrics", {})
+
+            if metrics:
+                rows = []
+
+                for metric_name, value in metrics.items():
+                    display_name = (
+                        metric_name
+                        .replace("_pct", "")
+                        .replace("_pp", "")
+                        .replace("_", " ")
+                        .title()
+                    )
+
+                    if value is None:
+                        display_value = "N/A"
+                    elif metric_name.endswith("_pct"):
+                        display_value = f"{value:,.2f}%"
+                    elif metric_name.endswith("_pp"):
+                        display_value = f"{value:,.2f} pp"
+                    elif isinstance(value, (int, float)):
+                        display_value = f"{value:,.2f}"
+                    else:
+                        display_value = str(value)
+
+                    rows.append(
+                        {
+                            "Metric": display_name,
+                            "Value": display_value,
+                        }
+                    )
+
+                st.dataframe(
+                    pd.DataFrame(rows),
+                    hide_index=True,
+                    use_container_width=True,
+                )
+
+    st.caption(result["disclaimer"])
+
+
 def render_machine_learning(uploaded_file, df, target_column, dataset_name):
     """Render the portfolio machine-learning benchmark workspace."""
 
@@ -1174,8 +1423,11 @@ else:
     )
 
     def workspace_label(name):
-        if name == "Machine Learning" and not verification_unlocked:
-            return "Machine Learning 🔒"
+        if (
+            name in {"Financial Intelligence", "Machine Learning"}
+            and not verification_unlocked
+        ):
+            return f"{name} 🔒"
         return name
 
     workspace = st.radio(
@@ -1185,6 +1437,7 @@ else:
             "Explore",
             "Target Analysis",
             "Verification",
+            "Financial Intelligence",
             "Machine Learning",
         ],
         horizontal=True,
@@ -1213,6 +1466,13 @@ else:
         )
     elif workspace == "Verification":
         render_verification(
+            uploaded_file,
+            df,
+            target_column,
+            dataset_name,
+        )
+    elif workspace == "Financial Intelligence":
+        render_financial_intelligence(
             uploaded_file,
             df,
             target_column,
