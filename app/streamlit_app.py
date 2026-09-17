@@ -36,7 +36,7 @@ from analytics.visualizations import (
 
 
 st.set_page_config(
-    page_title="FinData Verifier Agent",
+    page_title="Financial Data Intelligence",
     layout="wide",
 )
 
@@ -107,14 +107,14 @@ st.markdown(
 
 def render_header():
     st.markdown(
-        '<div class="main-title">FinData Verifier Agent</div>',
+        '<div class="main-title">Financial Data Intelligence</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
         (
             '<div class="subtitle">'
-            "Verify financial datasets before downstream AI agents "
-            "and ML models use them."
+            "Verify financial data, surface meaningful risk signals, "
+            "and support safer analytical decisions."
             "</div>"
         ),
         unsafe_allow_html=True,
@@ -122,11 +122,11 @@ def render_header():
 
     st.markdown(
         """
-        <span class="badge">CROO CAP-ready</span>
         <span class="badge">Financial Data Verification</span>
-        <span class="badge">Target Leakage Detection</span>
-        <span class="badge">SHA256 Proof</span>
-        <span class="badge">A2A Workflow</span>
+        <span class="badge">Financial Statement Analysis</span>
+        <span class="badge">ML Readiness & Benchmarking</span>
+        <span class="badge">Target Leakage Guard</span>
+        <span class="badge">Analyst Decision Support</span>
         """,
         unsafe_allow_html=True,
     )
@@ -811,15 +811,15 @@ def render_getting_started():
     st.subheader("Getting started")
     st.markdown(
         """
-        1. Upload a CSV dataset.
-        2. Select a target column if you are doing supervised analysis.
-        3. Review **Overview**, **Explore**, and **Target Analysis**.
-        4. Open **Verification** and run the trust, leakage, and readiness checks.
-        5. If verification passes, open **Machine Learning** to benchmark models.
-        6. Review the **SHA256 Proof & Report** tab and download the verification report.
+1. **Upload a CSV dataset.**
+2. Optionally select a **target column** if you are doing supervised machine learning.
+3. Review **Overview**, **Explore**, and **Target Analysis** where relevant.
+4. Open **Verification** to check data quality, leakage risk, readiness, and integrity.
+5. For multi-period financial statement data, open **Financial Intelligence** to review accounting, working-capital, earnings-quality, and liquidity signals.
+6. For supervised transaction or modelling datasets, open **Machine Learning** to benchmark classification models after verification.
+7. Review the **SHA256 Proof & Report** for the verification record.
         """
     )
-
 
 
 def render_financial_intelligence(
