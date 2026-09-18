@@ -271,6 +271,20 @@ def _build_debt_fallback(
                 current_rows[end].get("filed", ""),
                 noncurrent_rows[end].get("filed", ""),
             ),
+            "source_components": [
+                {
+                    "concept": current_concept,
+                    "value": current_value,
+                    "filed": current_rows[end].get("filed"),
+                    "accession": current_rows[end].get("accn"),
+                },
+                {
+                    "concept": noncurrent_concept,
+                    "value": noncurrent_value,
+                    "filed": noncurrent_rows[end].get("filed"),
+                    "accession": noncurrent_rows[end].get("accn"),
+                },
+            ],
         }
 
     if not combined:
@@ -337,14 +351,18 @@ def build_sec_annual_financial_statement(
     latest_periods = sorted(latest_periods)
 
     records = []
+    provenance: dict[str, dict[str, Any]] = {}
 
     for period_end in latest_periods:
         record: dict[str, Any] = {
             "period": period_end,
         }
 
+        period_provenance: dict[str, Any] = {}
+
         for metric in METRIC_CANDIDATES:
             observation = metric_rows.get(metric, {}).get(period_end)
+            concept = selected_concepts.get(metric)
 
             record[metric] = (
                 observation.get("val")
@@ -352,7 +370,35 @@ def build_sec_annual_financial_statement(
                 else None
             )
 
+            if observation is None:
+                period_provenance[metric] = {
+                    "concept": concept,
+                    "status": "missing",
+                }
+                continue
+
+            period_provenance[metric] = {
+                "concept": concept,
+                "status": "available",
+                "value": observation.get("val"),
+                "unit": "USD",
+                "form": observation.get("form"),
+                "start": observation.get("start"),
+                "end": observation.get("end"),
+                "filed": observation.get("filed"),
+                "accession": observation.get("accn"),
+                "frame": observation.get("frame"),
+                "derived": bool(
+                    observation.get("source_components")
+                ),
+                "components": observation.get(
+                    "source_components",
+                    [],
+                ),
+            }
+
         records.append(record)
+        provenance[period_end] = period_provenance
 
     dataframe = pd.DataFrame(records)
 
@@ -376,6 +422,12 @@ def build_sec_annual_financial_statement(
         "dataframe": dataframe,
         "selected_concepts": selected_concepts,
         "missing_by_period": missing_by_period,
+        "provenance": provenance,
+        "source": "SEC EDGAR Company Facts",
+        "source_endpoint": (
+            "https://data.sec.gov/api/xbrl/companyfacts/"
+            f"CIK{company['cik']}.json"
+        ),
         "warnings": warnings,
         "methodology": (
             "Annual 10-K facts only. Duration metrics use full-year "
