@@ -414,9 +414,771 @@ def liquidity_leverage_signal(
     )
 
 
+
+def _build_executive_assessment(
+    signals: list[dict[str, Any]],
+    trend_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a concise, deterministic analyst-level executive assessment."""
+
+    severity_rank = {
+        "Normal": 0,
+        "Review": 1,
+        "High Attention": 2,
+    }
+
+    trend_summary = None
+
+    if trend_context:
+        core_metrics = [
+            ("revenue", "Revenue"),
+            ("net_income", "Net Income"),
+            ("operating_cash_flow", "Operating Cash Flow"),
+        ]
+
+        metric_trends = trend_context.get("metric_trends", {})
+
+        yoy_parts = []
+        accelerating = []
+        moderating = []
+
+        for metric_key, display_name in core_metrics:
+            metric_trend = metric_trends.get(metric_key, {})
+
+            latest_yoy = metric_trend.get("latest_yoy_pct")
+            recent_cagr = metric_trend.get("recent_cagr_pct")
+            full_cagr = metric_trend.get("full_history_cagr_pct")
+
+            if isinstance(latest_yoy, (int, float)):
+                yoy_parts.append(
+                    f"{display_name} {latest_yoy:.2f}%"
+                )
+
+            if (
+                isinstance(recent_cagr, (int, float))
+                and isinstance(full_cagr, (int, float))
+            ):
+                trend_gap = recent_cagr - full_cagr
+
+                if trend_gap >= 10:
+                    accelerating.append(display_name)
+                elif trend_gap <= -10:
+                    moderating.append(display_name)
+
+        trend_parts = []
+
+        if yoy_parts:
+            trend_parts.append(
+                "Latest YoY growth across the core metrics is: "
+                + ", ".join(yoy_parts)
+                + "."
+            )
+
+        if len(accelerating) == len(core_metrics):
+            trend_parts.append(
+                "Recent 3-year CAGR is above the full-period CAGR across all three "
+                "core metrics, indicating broad-based acceleration relative "
+                "to the longer-term history."
+            )
+        elif accelerating:
+            trend_parts.append(
+                "Recent growth is running above the longer-term trend for "
+                + ", ".join(accelerating)
+                + "."
+            )
+
+        if moderating:
+            trend_parts.append(
+                "Recent growth is below the longer-term trend for "
+                + ", ".join(moderating)
+                + ", indicating some moderation."
+            )
+
+        if trend_parts:
+            period_count = trend_context.get("period_count", 0)
+
+            if period_count:
+                trend_summary = (
+                    f"Across the available {period_count}-fiscal-year history, "
+                    + " ".join(trend_parts)
+                )
+            else:
+                trend_summary = " ".join(trend_parts)
+
+    flagged = [
+        signal
+        for signal in signals
+        if signal.get("status") != "Normal"
+    ]
+
+    normal = [
+        signal
+        for signal in signals
+        if signal.get("status") == "Normal"
+    ]
+
+    primary = (
+        max(
+            flagged,
+            key=lambda signal: severity_rank.get(
+                signal.get("status"),
+                0,
+            ),
+        )
+        if flagged
+        else None
+    )
+
+    supporting_evidence = " ".join(
+        signal.get("interpretation", "").strip()
+        for signal in normal[:3]
+        if signal.get("interpretation")
+    )
+
+    if not supporting_evidence:
+        supporting_evidence = (
+            "No additional positive evidence was identified under the "
+            "current analytical rules."
+        )
+
+    if primary is None:
+        return {
+            "overall_finding": (
+                "No material financial watchpoints were identified across "
+                "the monitored areas under the current analytical rules."
+            ),
+            "primary_review_point": None,
+            "trend_summary": trend_summary,
+            "supporting_evidence": supporting_evidence,
+            "follow_up_analysis": None,
+            "evidence_gap": (
+                "This rule-based review is limited to the standardized "
+                "metrics available in the dataset and does not replace "
+                "filing-note or management-commentary review."
+            ),
+            "recommended_next_step": (
+                "No immediate escalation is indicated. Continue trend "
+                "monitoring and refresh the analysis when the next reporting "
+                "period becomes available."
+            ),
+        }
+
+    area = primary.get("area", "Financial signal")
+
+    interpretation = primary.get(
+        "interpretation",
+        "A financial signal requires analyst review.",
+    )
+
+    metrics = primary.get("metrics", {})
+
+    other_flagged = max(len(flagged) - 1, 0)
+    stable_count = len(normal)
+
+    overall_parts = [
+        f"The principal watchpoint is {area.lower()}: {interpretation}"
+    ]
+
+    if stable_count:
+        overall_parts.append(
+            f"{stable_count} of the other monitored areas remain within "
+            "normal ranges under the current analytical rules."
+        )
+
+    if other_flagged:
+        overall_parts.append(
+            f"{other_flagged} additional monitored area"
+            f"{' also requires' if other_flagged == 1 else 's also require'} "
+            "review."
+        )
+
+    overall_finding = " ".join(overall_parts)
+
+    def metric_value(*names):
+        for name in names:
+            value = metrics.get(name)
+
+            if isinstance(value, (int, float)):
+                return float(value)
+
+        return None
+
+    follow_up_analysis = interpretation
+
+    evidence_gap = (
+        "The current standardized dataset does not contain enough detail to "
+        "determine the underlying operating driver of this signal."
+    )
+
+    recommended_next_step = primary.get(
+        "analyst_action",
+        "Review the underlying filing detail before relying on this signal "
+        "for a downstream decision.",
+    )
+
+    # --------------------------------------------------------
+    # Working Capital
+    # --------------------------------------------------------
+
+    if area == "Working Capital":
+        revenue_growth = metric_value(
+            "revenue_growth_pct",
+        )
+
+        inventory_growth = metric_value(
+            "inventory_growth_pct",
+        )
+
+        receivables_growth = metric_value(
+            "accounts_receivable_growth_pct",
+            "receivables_growth_pct",
+        )
+
+        follow_up_parts = []
+
+        if (
+            revenue_growth is not None
+            and inventory_growth is not None
+        ):
+            follow_up_parts.append(
+                "Inventory growth exceeded revenue growth by "
+                f"{inventory_growth - revenue_growth:.2f} percentage points."
+            )
+
+        if (
+            revenue_growth is not None
+            and receivables_growth is not None
+            and receivables_growth > revenue_growth
+        ):
+            follow_up_parts.append(
+                "Receivables also grew faster than revenue by "
+                f"{receivables_growth - revenue_growth:.2f} percentage points."
+            )
+
+        if follow_up_parts:
+            follow_up_analysis = (
+                " ".join(follow_up_parts)
+                + " The divergence is confirmed by the current data, but its "
+                "commercial cause cannot be established from these metrics alone."
+            )
+
+        evidence_gap = (
+            "The standardized dataset does not include inventory turnover, "
+            "cost of revenue, ageing detail, or management commentary, so it "
+            "cannot distinguish planned inventory build from slower conversion."
+        )
+
+        recommended_next_step = (
+            "Review inventory turnover, cost of revenue and gross-margin "
+            "movement alongside management commentary. Escalate only if the "
+            "inventory build is persistent, margin-dilutive, or unsupported "
+            "by demand indicators."
+        )
+
+    # --------------------------------------------------------
+    # Accounting Integrity
+    # --------------------------------------------------------
+
+    elif area == "Accounting Integrity":
+        difference_pct = metric_value(
+            "difference_pct",
+            "balance_sheet_difference_pct",
+        )
+
+        if difference_pct is not None:
+            follow_up_analysis = (
+                "The balance-sheet reconciliation difference is "
+                f"{difference_pct:.2f}% under the current mapping."
+            )
+
+        evidence_gap = (
+            "This check does not validate footnote classifications, "
+            "off-balance-sheet commitments, lease detail, or filing-specific "
+            "taxonomy judgements."
+        )
+
+        recommended_next_step = (
+            "Trace any reconciliation exception back to the source filing, "
+            "confirm the mapped XBRL concepts, and review material footnote "
+            "classifications before escalation."
+        )
+
+    # --------------------------------------------------------
+    # Earnings Quality
+    # --------------------------------------------------------
+
+    elif area == "Earnings Quality":
+        net_income_growth = metric_value(
+            "net_income_growth_pct",
+        )
+
+        cash_flow_growth = metric_value(
+            "operating_cash_flow_growth_pct",
+        )
+
+        divergence = metric_value(
+            "growth_divergence_pp",
+        )
+
+        if divergence is not None:
+            follow_up_analysis = (
+                "Net-income and operating-cash-flow growth differ by "
+                f"{divergence:.2f} percentage points."
+            )
+
+        elif (
+            net_income_growth is not None
+            and cash_flow_growth is not None
+        ):
+            follow_up_analysis = (
+                "Net income grew "
+                f"{net_income_growth:.2f}% versus operating cash flow at "
+                f"{cash_flow_growth:.2f}%."
+            )
+
+        evidence_gap = (
+            "The current view does not decompose accruals, non-cash items, "
+            "one-off gains or losses, or working-capital contributions to "
+            "cash flow."
+        )
+
+        recommended_next_step = (
+            "Review the cash-flow bridge, accrual movements, non-cash items "
+            "and material one-offs to determine whether the earnings/cash "
+            "divergence is temporary or persistent."
+        )
+
+    # --------------------------------------------------------
+    # Liquidity & Leverage
+    # --------------------------------------------------------
+
+    elif area == "Liquidity & Leverage":
+        current_ratio = metric_value(
+            "current_ratio",
+        )
+
+        debt_growth = metric_value(
+            "debt_growth_pct",
+        )
+
+        cash_growth = metric_value(
+            "cash_growth_pct",
+        )
+
+        follow_up_parts = []
+
+        if current_ratio is not None:
+            follow_up_parts.append(
+                f"The current ratio is {current_ratio:.2f}x."
+            )
+
+        if debt_growth is not None:
+            follow_up_parts.append(
+                f"Debt changed by {debt_growth:.2f}%."
+            )
+
+        if cash_growth is not None:
+            follow_up_parts.append(
+                f"Cash changed by {cash_growth:.2f}%."
+            )
+
+        if follow_up_parts:
+            follow_up_analysis = " ".join(
+                follow_up_parts
+            )
+
+        evidence_gap = (
+            "The standardized dataset does not include debt maturity profile, "
+            "interest coverage, covenant headroom, committed facilities, or "
+            "near-term contractual cash requirements."
+        )
+
+        recommended_next_step = (
+            "Review debt maturities, interest coverage, available liquidity "
+            "and covenant headroom before drawing a firm conclusion on "
+            "financing risk."
+        )
+
+    return {
+        "overall_finding": overall_finding,
+        "primary_review_point": interpretation,
+        "trend_summary": trend_summary,
+        "supporting_evidence": supporting_evidence,
+        "follow_up_analysis": follow_up_analysis,
+        "evidence_gap": evidence_gap,
+        "recommended_next_step": recommended_next_step,
+    }
+
+
+
+def _build_multi_year_trend_context(
+    history: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    Build analyst-oriented multi-year trend statistics from annual history.
+
+    Missing observations are ignored rather than treated as zero.
+    CAGR uses the actual fiscal-year span between valid observations.
+    """
+
+    metrics = [
+        "revenue",
+        "accounts_receivable",
+        "inventory",
+        "net_income",
+        "operating_cash_flow",
+        "total_assets",
+        "total_liabilities",
+        "total_equity",
+        "current_assets",
+        "current_liabilities",
+        "total_debt",
+        "cash_and_equivalents",
+    ]
+
+    ordered_history = sorted(
+        history,
+        key=lambda row: str(row.get("period", "")),
+    )
+
+    def period_year(period: str) -> int | None:
+        try:
+            return int(str(period)[:4])
+        except (TypeError, ValueError):
+            return None
+
+    def growth_pct(current_value, previous_value):
+        current_number = _number(current_value)
+        previous_number = _number(previous_value)
+
+        if (
+            current_number is None
+            or previous_number is None
+            or previous_number == 0
+        ):
+            return None
+
+        return (
+            (current_number - previous_number)
+            / abs(previous_number)
+            * 100
+        )
+
+    metric_trends: dict[str, Any] = {}
+
+    for metric in metrics:
+        observations = []
+
+        for row in ordered_history:
+            value = _number(row.get(metric))
+            period = str(row.get("period", ""))
+
+            if value is not None and period:
+                observations.append(
+                    {
+                        "period": period,
+                        "year": period_year(period),
+                        "value": value,
+                    }
+                )
+
+        trend = {
+            "observations": len(observations),
+            "first_period": None,
+            "last_period": None,
+            "latest_value": None,
+            "latest_yoy_pct": None,
+            "recent_cagr_pct": None,
+            "full_history_cagr_pct": None,
+        }
+
+        if observations:
+            trend["first_period"] = observations[0]["period"]
+            trend["last_period"] = observations[-1]["period"]
+            trend["latest_value"] = observations[-1]["value"]
+
+        if len(observations) >= 2:
+            latest = observations[-1]
+            previous = observations[-2]
+
+            latest_year = latest["year"]
+            previous_year = previous["year"]
+
+            # Only call it YoY when the observations are consecutive fiscal years.
+            if (
+                latest_year is not None
+                and previous_year is not None
+                and latest_year - previous_year == 1
+            ):
+                latest_yoy = growth_pct(
+                    latest["value"],
+                    previous["value"],
+                )
+
+                trend["latest_yoy_pct"] = (
+                    round(latest_yoy, 2)
+                    if latest_yoy is not None
+                    else None
+                )
+
+            first = observations[0]
+            first_year = first["year"]
+
+            if (
+                first_year is not None
+                and latest_year is not None
+                and latest_year > first_year
+                and first["value"] > 0
+                and latest["value"] > 0
+            ):
+                year_span = latest_year - first_year
+
+                full_cagr = (
+                    (latest["value"] / first["value"])
+                    ** (1 / year_span)
+                    - 1
+                ) * 100
+
+                trend["full_history_cagr_pct"] = round(
+                    full_cagr,
+                    2,
+                )
+
+            if latest_year is not None:
+                recent_candidates = [
+                    obs
+                    for obs in observations
+                    if (
+                        obs["year"] is not None
+                        and obs["year"] >= latest_year - 3
+                    )
+                ]
+
+                if len(recent_candidates) >= 2:
+                    recent_first = recent_candidates[0]
+                    recent_last = recent_candidates[-1]
+
+                    recent_span = (
+                        recent_last["year"]
+                        - recent_first["year"]
+                    )
+
+                    if (
+                        recent_span > 0
+                        and recent_first["value"] > 0
+                        and recent_last["value"] > 0
+                    ):
+                        recent_cagr = (
+                            (
+                                recent_last["value"]
+                                / recent_first["value"]
+                            )
+                            ** (1 / recent_span)
+                            - 1
+                        ) * 100
+
+                        trend["recent_cagr_pct"] = round(
+                            recent_cagr,
+                            2,
+                        )
+
+        metric_trends[metric] = trend
+
+    periods = [
+        str(row.get("period"))
+        for row in ordered_history
+        if row.get("period")
+    ]
+
+    return {
+        "period_count": len(ordered_history),
+        "start_period": periods[0] if periods else None,
+        "end_period": periods[-1] if periods else None,
+        "metric_trends": metric_trends,
+    }
+
+
+
+def _build_next_fiscal_year_outlook(
+    history: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    Build a deterministic one-year-ahead financial outlook.
+
+    This is a trend-based analytical scenario, not company guidance,
+    an analyst price target, or investment advice.
+
+    The base growth assumption gives greater weight to the recent trend
+    while retaining the longer-term history as an anchor.
+    """
+
+    trend_context = _build_multi_year_trend_context(history)
+
+    core_metrics = [
+        ("revenue", "Revenue"),
+        ("net_income", "Net Income"),
+        ("operating_cash_flow", "Operating Cash Flow"),
+    ]
+
+    items = []
+
+    for metric, display_name in core_metrics:
+        trend = trend_context.get("metric_trends", {}).get(metric, {})
+
+        latest_value = _number(trend.get("latest_value"))
+        recent_growth = _number(trend.get("recent_cagr_pct"))
+        long_term_growth = _number(trend.get("full_history_cagr_pct"))
+
+        observations = int(
+            trend.get("observations") or 0
+        )
+
+        if (
+            latest_value is None
+            or latest_value <= 0
+            or observations < 3
+        ):
+            items.append(
+                {
+                    "metric": metric,
+                    "display_name": display_name,
+                    "status": "Insufficient history",
+                    "latest_value": latest_value,
+                    "base_growth_pct": None,
+                    "projected_value": None,
+                    "lower_value": None,
+                    "upper_value": None,
+                    "recent_growth_pct": recent_growth,
+                    "long_term_growth_pct": long_term_growth,
+                    "observations": observations,
+                }
+            )
+            continue
+
+        if recent_growth is not None and long_term_growth is not None:
+            blended_growth = (
+                0.35 * recent_growth
+                + 0.65 * long_term_growth
+            )
+
+            # Moderate extraordinary historical growth before using it
+            # as a one-year analytical scenario.
+            base_growth = 0.50 * blended_growth
+
+            uncertainty = max(
+                5.0,
+                0.15 * abs(recent_growth - long_term_growth),
+            )
+
+            lower_growth = base_growth - uncertainty
+            upper_growth = base_growth + uncertainty
+
+        elif recent_growth is not None:
+            base_growth = 0.50 * recent_growth
+            uncertainty = max(
+                5.0,
+                0.15 * abs(base_growth),
+            )
+            lower_growth = base_growth - uncertainty
+            upper_growth = base_growth + uncertainty
+
+        elif long_term_growth is not None:
+            base_growth = 0.50 * long_term_growth
+            uncertainty = max(
+                5.0,
+                0.15 * abs(base_growth),
+            )
+            lower_growth = base_growth - uncertainty
+            upper_growth = base_growth + uncertainty
+
+        else:
+            items.append(
+                {
+                    "metric": metric,
+                    "display_name": display_name,
+                    "status": "Insufficient trend data",
+                    "latest_value": latest_value,
+                    "base_growth_pct": None,
+                    "projected_value": None,
+                    "lower_value": None,
+                    "upper_value": None,
+                    "recent_growth_pct": None,
+                    "long_term_growth_pct": None,
+                    "observations": observations,
+                }
+            )
+            continue
+
+        projected_value = max(
+            latest_value * (1 + base_growth / 100),
+            0.0,
+        )
+
+        lower_value = max(
+            latest_value * (1 + lower_growth / 100),
+            0.0,
+        )
+
+        upper_value = max(
+            latest_value * (1 + upper_growth / 100),
+            0.0,
+        )
+
+        if base_growth > 5:
+            direction = "Expansion"
+        elif base_growth < -5:
+            direction = "Contraction"
+        else:
+            direction = "Broadly stable"
+
+        items.append(
+            {
+                "metric": metric,
+                "display_name": display_name,
+                "status": "Available",
+                "direction": direction,
+                "latest_value": round(latest_value, 2),
+                "base_growth_pct": round(base_growth, 2),
+                "projected_value": round(projected_value, 2),
+                "lower_value": round(lower_value, 2),
+                "upper_value": round(upper_value, 2),
+                "recent_growth_pct": (
+                    round(recent_growth, 2)
+                    if recent_growth is not None
+                    else None
+                ),
+                "long_term_growth_pct": (
+                    round(long_term_growth, 2)
+                    if long_term_growth is not None
+                    else None
+                ),
+                "observations": observations,
+            }
+        )
+
+    return {
+        "label": "Next Fiscal Year Outlook",
+        "period_count": trend_context.get("period_count", 0),
+        "history_start": trend_context.get("start_period"),
+        "history_end": trend_context.get("end_period"),
+        "methodology": (
+            "Moderated trend scenario using 35% recent 3-year CAGR and "
+            "65% full-history CAGR, followed by a 50% growth dampening "
+            "factor to reduce extrapolation risk."
+        ),
+        "items": items,
+        "disclaimer": (
+            "This outlook is an analytical trend scenario based on "
+            "historical financial statements. It is not company guidance, "
+            "a valuation target, or investment advice."
+        ),
+    }
+
+
 def analyze_financial_intelligence(
     current: dict[str, Any],
     previous: dict[str, Any],
+    trend_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Run the first Financial Intelligence rule engine.
@@ -470,9 +1232,15 @@ def analyze_financial_intelligence(
         if signal["status"] != "Normal"
     ]
 
+    executive_assessment = _build_executive_assessment(
+        signals,
+        trend_context=trend_context,
+    )
+
     return {
         "decision": decision,
         "summary": summary,
+        "executive_assessment": executive_assessment,
         "status_counts": status_counts,
         "signals": signals,
         "review_priorities": priorities,

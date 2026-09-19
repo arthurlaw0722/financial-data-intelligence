@@ -133,11 +133,21 @@ def prepare_financial_periods(
     previous = row_to_metrics(previous_row)
     current = row_to_metrics(current_row)
 
+    history = [
+        {
+            "period": str(row["period"]),
+            **row_to_metrics(row),
+        }
+        for _, row in working.iterrows()
+    ]
+
     return {
         "previous_period": str(previous_row["period"]),
         "current_period": str(current_row["period"]),
         "previous": previous,
         "current": current,
+        "history": history,
+        "history_period_count": len(history),
         "available_metrics": schema["available_metrics"],
         "missing_metrics": schema["missing_metrics"],
         "schema": schema,

@@ -299,10 +299,10 @@ def build_sec_annual_financial_statement(
     ticker: str,
 ) -> dict[str, Any]:
     """
-    Convert SEC Company Facts into the standard two-period dataframe
-    consumed by the Financial Intelligence Engine.
+    Convert SEC Company Facts into a standardized multi-period annual
+    financial-statement dataframe consumed by the Financial Intelligence Engine.
 
-    Version 1 deliberately uses annual 10-K data only.
+    Uses annual 10-K data only and retains up to 10 reporting periods.
     """
     company = fetch_company_facts(ticker)
 
@@ -343,10 +343,12 @@ def build_sec_annual_financial_statement(
             "At least two annual balance-sheet periods are required."
         )
 
+    max_annual_periods = 10
+
     latest_periods = sorted(
         reference_rows.keys(),
         reverse=True,
-    )[:2]
+    )[:max_annual_periods]
 
     latest_periods = sorted(latest_periods)
 

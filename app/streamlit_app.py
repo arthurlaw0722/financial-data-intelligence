@@ -23,7 +23,11 @@ from agent.readiness import assess_readiness
 from analytics.profiler import profile_dataset
 from analytics.target_analysis import analyze_target
 from analytics.ml_pipeline import train_binary_models, model_comparison_table
-from analytics.financial_intelligence import analyze_financial_intelligence
+from analytics.financial_intelligence import (
+    analyze_financial_intelligence,
+    _build_multi_year_trend_context,
+    _build_next_fiscal_year_outlook,
+)
 from analytics.financial_statement_adapter import (
     detect_financial_statement_schema,
     prepare_financial_periods,
@@ -490,7 +494,8 @@ def render_configuration():
         if len(periods) >= 2:
             st.caption(
                 "SEC EDGAR · Annual 10-K data · "
-                f"{periods[-2]} → {periods[-1]} · "
+                f"FY{pd.to_datetime(periods[0]).year}–FY{pd.to_datetime(periods[-1]).year} · "
+                f"{len(periods)} fiscal years · "
                 f"{len(sec_result['selected_concepts'])} "
                 "standardized financial metrics"
             )
@@ -830,9 +835,71 @@ def build_verification_result(uploaded_file, df, target_column, dataset_name):
 
         analysis = analyse_dataset(csv_path, target)
         leakage = detect_possible_leakage(df, target)
-        score = calculate_trust_score(analysis, leakage)
-        readiness = assess_readiness(analysis, leakage, score)
+        is_financial_statement = detect_financial_statement_schema(df).get(
+            "is_financial_statement",
+            False,
+        )
 
+        score = calculate_trust_score(
+            analysis,
+            leakage,
+            workflow=(
+                "financial_statement"
+                if is_financial_statement
+                else "generic"
+            ),
+        )
+        financial_schema = detect_financial_statement_schema(df)
+        is_financial_statement = financial_schema.get(
+            "is_financial_statement",
+            False,
+        )
+
+        normalized_columns = {
+            str(column)
+            .strip()
+            .lower()
+            .replace(" ", "_")
+            .replace("-", "_")
+            for column in df.columns
+        }
+
+        contextual_evidence_columns = {
+            "management_commentary",
+            "management_discussion",
+            "mda",
+            "filing_notes",
+            "financial_notes",
+            "notes",
+            "forward_guidance",
+            "guidance",
+        }
+
+        has_contextual_evidence = bool(
+            normalized_columns & contextual_evidence_columns
+        )
+
+        readiness = assess_readiness(
+            analysis,
+            leakage,
+            score,
+            workflow=(
+                "financial_statement"
+                if is_financial_statement
+                else "generic"
+            ),
+            context=(
+                {
+                    "period_count": len(df),
+                    "financial_metric_count": len(
+                        financial_schema.get("available_metrics", [])
+                    ),
+                    "has_contextual_evidence": has_contextual_evidence,
+                }
+                if is_financial_statement
+                else None
+            ),
+        )
         temp_report = generate_markdown_report(
             dataset_name,
             analysis,
@@ -995,9 +1062,33 @@ def render_verification_result(
         with risk_detail_col2:
             if is_financial_statement:
                 st.markdown("### Financial Statement Context")
+                decision_readiness = readiness.get(
+                    "business_decision_readiness",
+                    "Unknown",
+                )
+
+                if decision_readiness == "High":
+                    readiness_explanation = (
+                        "The financial data and available contextual evidence support "
+                        "a stronger business-review assessment."
+                    )
+                elif decision_readiness == "Medium":
+                    readiness_explanation = (
+                        "The financial data is reliable, but standardized SEC metrics "
+                        "alone do not provide enough contextual evidence for "
+                        "high-confidence business conclusions."
+                    )
+                else:
+                    readiness_explanation = (
+                        "Additional financial or contextual evidence is recommended "
+                        "before relying on the dataset for business conclusions."
+                    )
+
                 st.info(
-                    "Target-class and class-imbalance checks are not "
-                    "applicable to this financial-statement workflow."
+                    f"**Decision Readiness is {decision_readiness}:** "
+                    f"{readiness_explanation}\n\n"
+                    "Target-class and class-imbalance checks are not applicable to "
+                    "this financial-statement workflow."
                 )
             else:
                 st.markdown("### Class Imbalance")
@@ -1281,9 +1372,18 @@ Examples of recognised metrics include `revenue`,
     try:
         periods = prepare_financial_periods(df)
 
+        trend_context = _build_multi_year_trend_context(
+            periods.get("history", [])
+        )
+
         result = analyze_financial_intelligence(
             current=periods["current"],
             previous=periods["previous"],
+            trend_context=trend_context,
+        )
+
+        next_fiscal_year_outlook = _build_next_fiscal_year_outlook(
+            periods.get("history", [])
         )
 
     except ValueError as exc:
@@ -1310,9 +1410,27 @@ Examples of recognised metrics include `revenue`,
 
     summary_col1, summary_col2, summary_col3 = st.columns(3)
 
+    previous_period_date = pd.to_datetime(
+        periods["previous_period"],
+        errors="coerce",
+    )
+    current_period_date = pd.to_datetime(
+        periods["current_period"],
+        errors="coerce",
+    )
+
+    if pd.notna(previous_period_date) and pd.notna(current_period_date):
+        period_comparison_label = (
+            f"FY{previous_period_date.year} → FY{current_period_date.year}"
+        )
+    else:
+        period_comparison_label = (
+            f"{periods['previous_period']} → {periods['current_period']}"
+        )
+
     summary_col1.metric(
         "Period Comparison",
-        f"{periods['previous_period']} → {periods['current_period']}",
+        period_comparison_label,
     )
     summary_col2.metric(
         "Financial Metrics",
@@ -1323,6 +1441,249 @@ Examples of recognised metrics include `revenue`,
         review_count,
     )
 
+    executive = result.get(
+        "executive_assessment",
+        {},
+    )
+
+    st.markdown("### Executive Assessment")
+
+    st.write(
+        executive.get(
+            "overall_finding",
+            summary,
+        )
+    )
+
+    trend_summary = executive.get("trend_summary")
+
+    if trend_summary:
+        st.markdown("**Multi-year context**")
+        st.write(trend_summary)
+
+    executive_col1, executive_col2 = st.columns(
+        [1, 1]
+    )
+
+    with executive_col1:
+        st.markdown("**Primary watchpoint**")
+
+        primary_review_point = executive.get(
+            "primary_review_point"
+        )
+
+        if primary_review_point:
+            st.warning(
+                primary_review_point
+            )
+        else:
+            st.success(
+                "No material watchpoint was identified under the current "
+                "analytical rules."
+            )
+
+    with executive_col2:
+        st.markdown("**Recommended next step**")
+
+        st.info(
+            executive.get(
+                "recommended_next_step",
+                "Continue standard financial review.",
+            )
+        )
+
+    supporting_evidence = executive.get(
+        "supporting_evidence"
+    )
+
+    if supporting_evidence:
+        st.markdown(
+            "**Supporting evidence**"
+        )
+
+        st.write(
+            supporting_evidence
+        )
+
+    follow_up_analysis = executive.get(
+        "follow_up_analysis"
+    )
+
+    evidence_gap = executive.get(
+        "evidence_gap"
+    )
+
+    if follow_up_analysis or evidence_gap:
+        with st.expander(
+            "Follow-up analysis",
+            expanded=False,
+        ):
+            if follow_up_analysis:
+                st.markdown(
+                    "**What the current data indicates**"
+                )
+
+                st.write(
+                    follow_up_analysis
+                )
+
+            if evidence_gap:
+                st.markdown(
+                    "**Evidence gap**"
+                )
+
+                st.write(
+                    evidence_gap
+                )
+
+    def format_financial_value(value):
+        if value is None:
+            return "N/A"
+
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+
+        absolute = abs(number)
+
+        if absolute >= 1_000_000_000:
+            return f"{number / 1_000_000_000:,.2f}B"
+        if absolute >= 1_000_000:
+            return f"{number / 1_000_000:,.2f}M"
+        if absolute >= 1_000:
+            return f"{number / 1_000:,.2f}K"
+
+        return f"{number:,.2f}"
+
+
+    def format_percentage(value):
+        if value is None:
+            return "N/A"
+
+        try:
+            return f"{float(value):,.2f}%"
+        except (TypeError, ValueError):
+            return "N/A"
+
+
+    st.markdown("### Multi-Year Trend Analysis")
+
+    trend_period_count = trend_context.get("period_count", 0)
+    trend_start_period = trend_context.get("start_period")
+    trend_end_period = trend_context.get("end_period")
+
+    try:
+        trend_start_fy = pd.to_datetime(trend_start_period).year
+        trend_end_fy = pd.to_datetime(trend_end_period).year
+        trend_period_label = (
+            f"{trend_period_count} fiscal years analysed · "
+            f"FY{trend_start_fy}–FY{trend_end_fy}"
+        )
+    except Exception:
+        trend_period_label = (
+            f"{trend_period_count} fiscal periods analysed"
+        )
+
+    st.caption(trend_period_label)
+
+    trend_metric_labels = {
+        "revenue": "Revenue",
+        "net_income": "Net Income",
+        "operating_cash_flow": "Operating Cash Flow",
+    }
+
+    trend_rows = []
+
+    for metric_name, display_name in trend_metric_labels.items():
+        trend = trend_context.get(
+            "metric_trends",
+            {},
+        ).get(
+            metric_name,
+            {},
+        )
+
+        trend_rows.append(
+            {
+                "Metric": display_name,
+                "Latest": format_financial_value(
+                    trend.get("latest_value")
+                ),
+                "Latest YoY": format_percentage(
+                    trend.get("latest_yoy_pct")
+                ),
+                "Recent CAGR (3Y)": format_percentage(
+                    trend.get("recent_cagr_pct")
+                ),
+                "Full-period CAGR": format_percentage(
+                    trend.get("full_history_cagr_pct")
+                ),
+            }
+        )
+
+    st.dataframe(
+        pd.DataFrame(trend_rows),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    st.markdown("### Next Fiscal Year Outlook")
+
+    st.caption(
+        "Historical trend scenario based on the available annual financial "
+        "record. The outlook is not company guidance or an investment forecast."
+    )
+
+    outlook_rows = []
+
+    for item in next_fiscal_year_outlook.get("items", []):
+        lower_value = item.get("lower_value")
+        upper_value = item.get("upper_value")
+
+        if lower_value is not None and upper_value is not None:
+            indicative_range = (
+                f"{format_financial_value(lower_value)} – "
+                f"{format_financial_value(upper_value)}"
+            )
+        else:
+            indicative_range = "N/A"
+
+        outlook_rows.append(
+            {
+                "Metric": item.get(
+                    "display_name",
+                    "Financial Metric",
+                ),
+                "Direction": item.get(
+                    "direction",
+                    "N/A",
+                ),
+                "Latest": format_financial_value(
+                    item.get("latest_value")
+                ),
+                "Moderated Growth Assumption": format_percentage(
+                    item.get("base_growth_pct")
+                ),
+                "Base Outlook": format_financial_value(
+                    item.get("projected_value")
+                ),
+                "Indicative Range": indicative_range,
+            }
+        )
+
+    if outlook_rows:
+        st.dataframe(
+            pd.DataFrame(outlook_rows),
+            hide_index=True,
+            use_container_width=True,
+        )
+    else:
+        st.info(
+            "Insufficient historical observations are available to produce "
+            "a next-fiscal-year trend outlook."
+        )
+
     st.markdown("### Financial Signals")
 
     signals = result["signals"]
@@ -1332,26 +1693,6 @@ Examples of recognised metrics include `revenue`,
         column.metric(
             signal["area"],
             signal["status"],
-        )
-
-    flagged_signals = [
-        signal
-        for signal in signals
-        if signal["status"] != "Normal"
-    ]
-
-    st.markdown("### Analyst Brief")
-
-    if flagged_signals:
-        analyst_brief = " ".join(
-            signal["interpretation"]
-            for signal in flagged_signals
-        )
-        st.write(analyst_brief)
-    else:
-        st.write(
-            "No material financial signals were identified under the "
-            "current analytical rules."
         )
 
     st.markdown("### Review Details")

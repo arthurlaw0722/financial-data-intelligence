@@ -1,4 +1,9 @@
-def calculate_trust_score(analysis: dict, leakage: dict) -> dict:
+def calculate_trust_score(
+    analysis: dict,
+    leakage: dict,
+    *,
+    workflow: str = "generic",
+) -> dict:
     score = 100
     penalties = []
 
@@ -32,7 +37,13 @@ def calculate_trust_score(analysis: dict, leakage: dict) -> dict:
         if info["outlier_ratio"] > 0.05
     ]
 
-    if high_outlier_cols:
+    # For ordinary modelling datasets, unusually high outlier ratios can
+    # indicate data-quality risk. For annual financial statements, however,
+    # rapid company growth can legitimately produce statistical outliers in
+    # a small number of fiscal-year observations. These are therefore
+    # interpreted downstream by Financial Intelligence rather than treated
+    # as a verification-quality penalty.
+    if workflow != "financial_statement" and high_outlier_cols:
         penalty = min(15, len(high_outlier_cols) * 3)
         score -= penalty
         penalties.append(f"Outlier-heavy columns: -{penalty}")
