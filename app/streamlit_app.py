@@ -1,12 +1,18 @@
 import sys
 import os
 import tempfile
+import hashlib
+import io
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
+
+from data_sources.sec_financial_mapper import (
+    build_sec_annual_financial_statement,
+)
 
 from agent.analyzer import analyse_dataset
 from agent.leakage import detect_possible_leakage
@@ -132,6 +138,32 @@ def render_header():
     )
 
 
+class InMemoryDatasetFile(io.BytesIO):
+    """File-like object for API-generated datasets."""
+
+    def __init__(self, raw_bytes, name, file_id):
+        super().__init__(raw_bytes)
+        self.name = name
+        self.size = len(raw_bytes)
+        self.file_id = file_id
+
+
+def dataframe_as_dataset_file(df, name, source_id):
+    """Create a deterministic CSV representation for verification."""
+    raw_bytes = df.to_csv(
+        index=False,
+        lineterminator="\n",
+    ).encode("utf-8")
+
+    digest = hashlib.sha256(raw_bytes).hexdigest()
+
+    return InMemoryDatasetFile(
+        raw_bytes,
+        name=name,
+        file_id=f"{source_id}:{digest}",
+    )
+
+
 def uploaded_file_signature(uploaded_file):
     return (
         uploaded_file.name,
@@ -164,78 +196,328 @@ def load_dataset(uploaded_file):
 def render_configuration():
     st.subheader("Dataset configuration")
 
-    config_col1, config_col2 = st.columns([1.35, 1])
-
-    with config_col1:
-        uploaded_file = st.file_uploader(
+    data_source = st.radio(
+        "Data source",
+        [
             "Upload CSV",
-            type=["csv"],
-            key="dataset_uploader",
-        )
+            "SEC Public Filing",
+        ],
+        horizontal=True,
+        key="data_source_mode",
+        help=(
+            "Upload your own dataset or retrieve standardized "
+            "annual financial data from SEC EDGAR."
+        ),
+    )
 
+    uploaded_file = None
     df = None
     dataset_profile = None
+    target_column = ""
+    dataset_name = ""
 
-    if uploaded_file is not None:
-        with st.spinner("Loading dataset..."):
-            df, dataset_profile = load_dataset(uploaded_file)
+    # =====================================================
+    # CSV SOURCE
+    # =====================================================
+    if data_source == "Upload CSV":
+        st.session_state.pop("active_sec_metadata", None)
 
-    with config_col2:
-        if df is None:
-            target_column = ""
-            st.selectbox(
-                "Target column",
-                ["Upload a CSV first"],
-                disabled=True,
-                key="target_column_disabled",
-            )
-        else:
-            target_column = st.selectbox(
-                "Target column",
-                options=[""] + df.columns.tolist(),
-                index=0,
-                format_func=lambda value: (
-                    "None / No target"
-                    if value == ""
-                    else value
-                ),
-                help="Select the column you want to predict or analyse.",
-                key="target_column_selector",
+        config_col1, config_col2 = st.columns([1.35, 1])
+
+        with config_col1:
+            uploaded_file = st.file_uploader(
+                "Upload CSV",
+                type=["csv"],
+                key="dataset_uploader",
             )
 
         if uploaded_file is not None:
-            current_name_signature = uploaded_file_signature(uploaded_file)
+            with st.spinner("Loading dataset..."):
+                df, dataset_profile = load_dataset(uploaded_file)
 
-            if (
-                st.session_state.get("dataset_name_file_signature")
-                != current_name_signature
-            ):
-                file_stem = os.path.splitext(uploaded_file.name)[0]
+        with config_col2:
+            if df is None:
+                target_column = ""
 
-                special_dataset_names = {
-                    "creditcard": "Credit Card Fraud Detection",
-                    "financial_statement_demo": "Financial Statement Demo",
-                }
-
-                suggested_name = special_dataset_names.get(
-                    file_stem.lower(),
-                    file_stem.replace("_", " ").replace("-", " ").title(),
+                st.selectbox(
+                    "Target column",
+                    ["Upload a CSV first"],
+                    disabled=True,
+                    key="target_column_disabled",
                 )
 
-                st.session_state["dataset_name_input"] = suggested_name
-                st.session_state["dataset_name_file_signature"] = (
-                    current_name_signature
+            else:
+                target_column = st.selectbox(
+                    "Target column",
+                    options=[""] + df.columns.tolist(),
+                    index=0,
+                    format_func=lambda value: (
+                        "None / No target"
+                        if value == ""
+                        else value
+                    ),
+                    help=(
+                        "Select the column you want to predict or analyse."
+                    ),
+                    key="target_column_selector",
                 )
 
-        elif "dataset_name_input" not in st.session_state:
-            st.session_state["dataset_name_input"] = ""
+            if uploaded_file is not None:
+                current_name_signature = uploaded_file_signature(
+                    uploaded_file
+                )
 
-        dataset_name = st.text_input(
-            "Dataset name",
-            key="dataset_name_input",
+                if (
+                    st.session_state.get(
+                        "dataset_name_file_signature"
+                    )
+                    != current_name_signature
+                ):
+                    file_stem = os.path.splitext(
+                        uploaded_file.name
+                    )[0]
+
+                    special_dataset_names = {
+                        "creditcard": (
+                            "Credit Card Fraud Detection"
+                        ),
+                        "financial_statement_demo": (
+                            "Financial Statement Demo"
+                        ),
+                    }
+
+                    suggested_name = special_dataset_names.get(
+                        file_stem.lower(),
+                        file_stem
+                        .replace("_", " ")
+                        .replace("-", " ")
+                        .title(),
+                    )
+
+                    st.session_state[
+                        "dataset_name_input"
+                    ] = suggested_name
+
+                    st.session_state[
+                        "dataset_name_file_signature"
+                    ] = current_name_signature
+
+            elif "dataset_name_input" not in st.session_state:
+                st.session_state["dataset_name_input"] = ""
+
+            dataset_name = st.text_input(
+                "Dataset name",
+                key="dataset_name_input",
+            )
+
+        return (
+            uploaded_file,
+            df,
+            dataset_profile,
+            target_column,
+            dataset_name,
         )
 
-    return uploaded_file, df, dataset_profile, target_column, dataset_name
+    # =====================================================
+    # SEC EDGAR SOURCE
+    # =====================================================
+    sec_col1, sec_col2 = st.columns([1.35, 1])
+
+    with sec_col1:
+        ticker = st.text_input(
+            "Company ticker",
+            placeholder="e.g. NVDA, AAPL, MSFT",
+            key="sec_ticker_input",
+        ).strip().upper()
+
+        load_sec = st.button(
+            "Load SEC filing",
+            type="primary",
+            use_container_width=True,
+            key="load_sec_filing",
+        )
+
+        st.caption(
+            "Retrieve standardized annual 10-K financial data "
+            "from SEC EDGAR Company Facts."
+        )
+
+    if load_sec:
+        if not ticker:
+            st.warning("Enter a company ticker first.")
+
+        else:
+            try:
+                with st.spinner(
+                    f"Loading {ticker} from SEC EDGAR..."
+                ):
+                    sec_result = (
+                        build_sec_annual_financial_statement(
+                            ticker
+                        )
+                    )
+
+                st.session_state[
+                    "sec_financial_result"
+                ] = sec_result
+
+                st.session_state[
+                    "sec_loaded_ticker"
+                ] = ticker
+
+                # A newly loaded source must be verified again.
+                st.session_state.pop(
+                    "verification_result",
+                    None,
+                )
+                st.session_state.pop(
+                    "verification_signature",
+                    None,
+                )
+
+                st.rerun()
+
+            except Exception as exc:
+                st.session_state.pop(
+                    "sec_financial_result",
+                    None,
+                )
+                st.session_state.pop(
+                    "sec_loaded_ticker",
+                    None,
+                )
+
+                st.error(
+                    "Unable to load this SEC filing. "
+                    f"{type(exc).__name__}: {exc}"
+                )
+
+    sec_result = st.session_state.get(
+        "sec_financial_result"
+    )
+    loaded_ticker = st.session_state.get(
+        "sec_loaded_ticker"
+    )
+
+    # Do not silently keep showing data for an old ticker.
+    if (
+        sec_result is not None
+        and ticker
+        and ticker != loaded_ticker
+    ):
+        sec_result = None
+        st.info(
+            f"Ticker changed to {ticker}. "
+            "Click Load SEC filing to retrieve the new company."
+        )
+
+    with sec_col2:
+        if sec_result is None:
+            st.selectbox(
+                "Target column",
+                ["None / No target"],
+                disabled=True,
+                key="sec_target_column_disabled",
+            )
+
+            st.text_input(
+                "Dataset name",
+                value="",
+                disabled=True,
+                key="sec_dataset_name_empty",
+            )
+
+        else:
+            target_column = ""
+
+            dataset_name = (
+                f"{sec_result['company_name']} "
+                "— SEC Annual Financials"
+            )
+
+            st.selectbox(
+                "Target column",
+                ["None / No target"],
+                disabled=True,
+                key="sec_target_column_loaded",
+            )
+
+            st.text_input(
+                "Dataset name",
+                value=dataset_name,
+                disabled=True,
+                key="sec_dataset_name_loaded",
+            )
+
+    if sec_result is not None:
+        sec_df = sec_result["dataframe"].copy()
+
+        virtual_name = (
+            f"{sec_result['ticker'].lower()}"
+            "_sec_annual_financials.csv"
+        )
+
+        uploaded_file = dataframe_as_dataset_file(
+            df=sec_df,
+            name=virtual_name,
+            source_id=(
+                f"sec:{sec_result['ticker']}:"
+                f"{sec_result['cik']}"
+            ),
+        )
+
+        df, dataset_profile = load_dataset(
+            uploaded_file
+        )
+
+        st.session_state[
+            "active_sec_metadata"
+        ] = sec_result
+
+        periods = (
+            df["period"]
+            .astype(str)
+            .tolist()
+            if "period" in df.columns
+            else []
+        )
+
+        st.success(
+            f"Loaded {sec_result['company_name']} "
+            f"({sec_result['ticker']})"
+        )
+
+        if len(periods) >= 2:
+            st.caption(
+                "SEC EDGAR · Annual 10-K data · "
+                f"{periods[-2]} → {periods[-1]} · "
+                f"{len(sec_result['selected_concepts'])} "
+                "standardized financial metrics"
+            )
+        else:
+            st.caption(
+                "Source: SEC EDGAR Company Facts"
+            )
+
+    else:
+        st.session_state.pop(
+            "active_sec_metadata",
+            None,
+        )
+
+        if not ticker:
+            st.info(
+                "Enter a US-listed company ticker to retrieve "
+                "its annual SEC financial data."
+            )
+
+    return (
+        uploaded_file,
+        df,
+        dataset_profile,
+        target_column,
+        dataset_name,
+    )
 
 
 def render_overview(df, dataset_profile, target_column):
@@ -587,7 +869,10 @@ def build_verification_result(uploaded_file, df, target_column, dataset_name):
             os.remove(csv_path)
 
 
-def render_verification_result(result):
+def render_verification_result(
+    result,
+    is_financial_statement=False,
+):
     analysis = result["analysis"]
     leakage = result["leakage"]
     score = result["score"]
@@ -599,23 +884,59 @@ def render_verification_result(result):
     leakage_count = leakage.get("risk_count", 0)
 
     if leakage_count == 0:
-        st.success(
-            "Verification passed — no target leakage risks were detected."
-        )
+        if is_financial_statement:
+            st.success(
+                "Verification completed — no blocking data-integrity "
+                "issues were detected."
+            )
+        else:
+            st.success(
+                "Verification passed — no target leakage risks were detected."
+            )
     else:
         st.error(
             f"Verification completed — {leakage_count} possible target "
             "leakage risk(s) detected. Machine Learning is blocked."
         )
 
-    metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
-    metric_col1.metric("Trust Score", f"{score['trust_score']}/100")
-    metric_col2.metric("Trust Grade", score["trust_grade"])
-    metric_col3.metric("ML Readiness", readiness["ml_readiness"])
-    metric_col4.metric(
-        "Business Readiness",
-        readiness["business_decision_readiness"],
-    )
+    if is_financial_statement:
+        metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+
+        metric_col1.metric(
+            "Trust Score",
+            f"{score['trust_score']}/100",
+        )
+        metric_col2.metric(
+            "Trust Grade",
+            score["trust_grade"],
+        )
+        metric_col3.metric(
+            "Decision Readiness",
+            readiness["business_decision_readiness"],
+        )
+        metric_col4.metric(
+            "Workflow",
+            "Financial Statement",
+        )
+    else:
+        metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+
+        metric_col1.metric(
+            "Trust Score",
+            f"{score['trust_score']}/100",
+        )
+        metric_col2.metric(
+            "Trust Grade",
+            score["trust_grade"],
+        )
+        metric_col3.metric(
+            "ML Readiness",
+            readiness["ml_readiness"],
+        )
+        metric_col4.metric(
+            "Business Readiness",
+            readiness["business_decision_readiness"],
+        )
 
     summary_tab, risks_tab, proof_tab = st.tabs(
         [
@@ -636,8 +957,16 @@ def render_verification_result(result):
 
         with findings_col2:
             st.info("**Recommended next steps**")
-            for step in readiness["recommended_next_steps"]:
-                st.markdown(f"- {step}")
+
+            if is_financial_statement:
+                st.markdown(
+                    "- Open **Financial Intelligence** and review any "
+                    "flagged accounting, working-capital, earnings-quality, "
+                    "and liquidity signals."
+                )
+            else:
+                for step in readiness["recommended_next_steps"]:
+                    st.markdown(f"- {step}")
 
     with risks_tab:
         st.markdown("### Dataset Risk Breakdown")
@@ -664,24 +993,31 @@ def render_verification_result(result):
                 st.success("No major penalties detected.")
 
         with risk_detail_col2:
-            st.markdown("### Class Imbalance")
-
-            if imbalance.get("status") == "no_target_column_provided":
-                st.warning("No target column provided.")
+            if is_financial_statement:
+                st.markdown("### Financial Statement Context")
+                st.info(
+                    "Target-class and class-imbalance checks are not "
+                    "applicable to this financial-statement workflow."
+                )
             else:
-                st.metric(
-                    "Target Column",
-                    imbalance["target_column"],
-                )
-                imbalance_col1, imbalance_col2 = st.columns(2)
-                imbalance_col1.metric(
-                    "Minority Class Ratio",
-                    imbalance["minority_class_ratio"],
-                )
-                imbalance_col2.metric(
-                    "Is Imbalanced",
-                    str(imbalance["is_imbalanced"]),
-                )
+                st.markdown("### Class Imbalance")
+
+                if imbalance.get("status") == "no_target_column_provided":
+                    st.warning("No target column provided.")
+                else:
+                    st.metric(
+                        "Target Column",
+                        imbalance["target_column"],
+                    )
+                    imbalance_col1, imbalance_col2 = st.columns(2)
+                    imbalance_col1.metric(
+                        "Minority Class Ratio",
+                        imbalance["minority_class_ratio"],
+                    )
+                    imbalance_col2.metric(
+                        "Is Imbalanced",
+                        str(imbalance["is_imbalanced"]),
+                    )
 
     with proof_tab:
         st.markdown("### SHA256 Verification Proof")
@@ -728,10 +1064,21 @@ def render_verification(
     dataset_name,
 ):
     st.subheader("Verification")
-    st.caption(
-        "Run the trust, leakage, readiness, and SHA256 integrity checks "
-        "from one place."
+    is_financial_statement = detect_financial_statement_schema(df).get(
+        "is_financial_statement",
+        False,
     )
+
+    if is_financial_statement:
+        st.caption(
+            "Check financial-data quality, statement structure, decision readiness, "
+            "and SHA256 integrity before analyst review."
+        )
+    else:
+        st.caption(
+            "Check dataset quality, target leakage, ML readiness, and SHA256 "
+            "integrity before model experimentation."
+        )
 
     if uploaded_file is None or df is None:
         st.info("Upload a CSV dataset first.")
@@ -792,19 +1139,40 @@ def render_verification(
         result is not None
         and st.session_state.get("verification_signature") == current_signature
     ):
-        render_verification_result(result)
-    else:
-        st.markdown(
-            """
-            **What this check includes**
-            - Dataset quality and duplicate-row checks
-            - Outlier-heavy column detection
-            - Class imbalance analysis
-            - Possible target leakage detection
-            - Dataset trust score and readiness guidance
-            - SHA256 dataset fingerprint and canonical report hash
-            """
+        render_verification_result(
+            result,
+            is_financial_statement=detect_financial_statement_schema(
+                df
+            ).get("is_financial_statement", False),
         )
+    else:
+        is_financial_statement = detect_financial_statement_schema(df).get(
+            "is_financial_statement",
+            False,
+        )
+
+        if is_financial_statement:
+            st.markdown(
+                """
+**What this check includes**
+- Financial dataset quality and duplicate-row checks
+- Financial-statement structure and metric coverage
+- Dataset trust score and decision-readiness guidance
+- SHA256 dataset fingerprint and canonical report hash
+"""
+            )
+        else:
+            st.markdown(
+                """
+**What this check includes**
+- Dataset quality and duplicate-row checks
+- Outlier-heavy column detection
+- Class imbalance analysis
+- Possible target leakage detection
+- Dataset trust score and readiness guidance
+- SHA256 dataset fingerprint and canonical report hash
+"""
+            )
 
 
 def render_getting_started():
@@ -1422,24 +1790,41 @@ else:
         == 0
     )
 
+    financial_schema = detect_financial_statement_schema(df)
+    is_financial_statement = financial_schema.get(
+        "is_financial_statement",
+        False,
+    )
+
+    if is_financial_statement:
+        workspace_options = [
+            "Overview",
+            "Explore",
+            "Verification",
+            "Financial Intelligence",
+        ]
+        gated_workspaces = {"Financial Intelligence"}
+    else:
+        workspace_options = [
+            "Overview",
+            "Explore",
+            "Target Analysis",
+            "Verification",
+            "Machine Learning",
+        ]
+        gated_workspaces = {"Machine Learning"}
+
+    if st.session_state.get("workspace_nav") not in workspace_options:
+        st.session_state["workspace_nav"] = "Overview"
+
     def workspace_label(name):
-        if (
-            name in {"Financial Intelligence", "Machine Learning"}
-            and not verification_unlocked
-        ):
+        if name in gated_workspaces and not verification_unlocked:
             return f"{name} 🔒"
         return name
 
     workspace = st.radio(
         "Workspace",
-        [
-            "Overview",
-            "Explore",
-            "Target Analysis",
-            "Verification",
-            "Financial Intelligence",
-            "Machine Learning",
-        ],
+        workspace_options,
         horizontal=True,
         label_visibility="collapsed",
         key="workspace_nav",
