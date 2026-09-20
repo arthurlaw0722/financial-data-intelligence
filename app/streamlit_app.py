@@ -1547,6 +1547,171 @@ Examples of recognised metrics include `revenue`,
                 st.markdown("**Recommended analyst action**")
                 st.info(analyst_action)
 
+    earnings_diagnostic = result.get(
+        "earnings_quality_diagnostic",
+        {},
+    )
+
+    if earnings_diagnostic:
+        st.markdown("### Earnings Quality Diagnostic")
+
+        historical_context = earnings_diagnostic.get(
+            "historical_context",
+            {},
+        )
+
+        recent_pattern = earnings_diagnostic.get(
+            "recent_cash_conversion_pattern",
+            {},
+        )
+
+        earnings_metrics = earnings_diagnostic.get(
+            "metrics",
+            {},
+        )
+
+        current_quality = earnings_diagnostic.get(
+            "status",
+            "Unavailable",
+        )
+
+        cash_conversion_value = earnings_metrics.get(
+            "cash_conversion_of_earnings"
+        )
+
+        cash_conversion_posture = earnings_diagnostic.get(
+            "cash_conversion_posture",
+            "Unavailable",
+        )
+
+        trend_label = recent_pattern.get(
+            "label",
+            "Unavailable",
+        )
+
+        display_trend = {
+            "Persistent recent decline": "Persistent decline",
+            "Persistent recent improvement": "Persistent improvement",
+            "Mixed recent trend": "Mixed trend",
+        }.get(trend_label, trend_label)
+
+        quality_col, conversion_col, trend_col = st.columns(3)
+
+        with quality_col:
+            st.metric(
+                "Current quality",
+                current_quality,
+            )
+
+        with conversion_col:
+            conversion_display = (
+                f"{cash_conversion_value:.2f}x"
+                if isinstance(cash_conversion_value, (int, float))
+                else "Unavailable"
+            )
+
+            st.metric(
+                "Cash conversion",
+                conversion_display,
+            )
+
+            st.caption(cash_conversion_posture)
+
+        with trend_col:
+            st.metric(
+                "Trend watch",
+                display_trend,
+            )
+
+        historical_label = historical_context.get(
+            "label",
+            "Unavailable",
+        )
+        latest_ratio = historical_context.get("latest_ratio")
+        prior_min = historical_context.get("prior_min_ratio")
+
+        context_parts = [f"Historical context: {historical_label}"]
+
+        if (
+            isinstance(latest_ratio, (int, float))
+            and isinstance(prior_min, (int, float))
+        ):
+            context_parts.append(
+                f"{latest_ratio:.2f}x vs prior minimum {prior_min:.2f}x"
+            )
+
+        st.caption(" · ".join(context_parts))
+
+        if (
+            current_quality == "Normal"
+            and cash_conversion_posture == "Broadly supportive"
+            and trend_label == "Persistent recent decline"
+        ):
+            st.info(
+                "Current earnings quality remains broadly supportive, "
+                "but cash conversion has weakened across four consecutive "
+                "fiscal periods and warrants continued monitoring."
+            )
+
+        interpretation = earnings_diagnostic.get("interpretation")
+
+        with st.expander("Earnings quality analysis and evidence"):
+            if interpretation:
+                st.markdown("**Diagnostic interpretation**")
+                st.write(interpretation)
+
+            st.markdown("**Historical cash-conversion context**")
+
+            historical_interpretation = historical_context.get(
+                "interpretation"
+            )
+
+            if historical_interpretation:
+                st.write(historical_interpretation)
+
+            recent_interpretation = recent_pattern.get(
+                "interpretation"
+            )
+
+            if recent_interpretation:
+                st.write(recent_interpretation)
+
+            st.markdown("**Evidence supporting the assessment**")
+
+            observed_evidence = earnings_diagnostic.get(
+                "observed_evidence",
+                [],
+            )
+
+            if observed_evidence:
+                st.markdown(
+                    "\n".join(
+                        f"- {item}"
+                        for item in observed_evidence
+                    )
+                )
+
+            st.markdown("**Evidence still required**")
+
+            evidence_gaps = earnings_diagnostic.get(
+                "evidence_gaps",
+                [],
+            )
+
+            if evidence_gaps:
+                st.markdown(
+                    "\n".join(
+                        f"- {item}"
+                        for item in evidence_gaps
+                    )
+                )
+
+            analyst_action = earnings_diagnostic.get("analyst_action")
+
+            if analyst_action:
+                st.markdown("**Recommended analyst action**")
+                st.info(analyst_action)
+
     st.markdown("### Overall Assessment")
 
     decision = result["decision"]
