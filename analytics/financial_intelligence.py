@@ -331,9 +331,32 @@ def liquidity_leverage_signal(
     current: dict[str, Any],
     previous: dict[str, Any],
 ) -> dict[str, Any]:
+    """
+    Assess latest-period liquidity and leverage using a combination of
+    balance-sheet ratios and period-on-period financing trends.
+
+    Thresholds are generic screening heuristics for non-financial
+    corporates. They are not industry-specific covenant thresholds.
+    """
+
     current_ratio = _ratio(
         current.get("current_assets"),
         current.get("current_liabilities"),
+    )
+
+    debt_to_assets = _ratio(
+        current.get("total_debt"),
+        current.get("total_assets"),
+    )
+
+    debt_to_equity = _ratio(
+        current.get("total_debt"),
+        current.get("total_equity"),
+    )
+
+    cash_to_debt = _ratio(
+        current.get("cash_and_equivalents"),
+        current.get("total_debt"),
     )
 
     debt_growth = _growth(
@@ -346,47 +369,142 @@ def liquidity_leverage_signal(
         previous.get("cash_and_equivalents"),
     )
 
-    status = "Normal"
-    reasons = []
+    review_reasons = []
+    high_attention_reasons = []
 
-    if current_ratio is not None and current_ratio < 1.0:
-        status = "Review"
-        reasons.append(
-            "Current assets are below current liabilities."
+    # ------------------------------------------------------------
+    # Liquidity screening
+    # ------------------------------------------------------------
+    if current_ratio is not None:
+        if current_ratio < 0.75:
+            high_attention_reasons.append(
+                "Current assets are materially below current liabilities."
+            )
+        elif current_ratio < 1.0:
+            review_reasons.append(
+                "Current assets are below current liabilities."
+            )
+
+    if cash_to_debt is not None:
+        if cash_to_debt < 0.10:
+            high_attention_reasons.append(
+                "Cash coverage of debt is very limited."
+            )
+        elif cash_to_debt < 0.25:
+            review_reasons.append(
+                "Cash coverage of debt is relatively limited."
+            )
+
+    # ------------------------------------------------------------
+    # Leverage screening
+    # ------------------------------------------------------------
+    if debt_to_assets is not None:
+        if debt_to_assets > 0.75:
+            high_attention_reasons.append(
+                "Debt represents a very high share of total assets."
+            )
+        elif debt_to_assets > 0.60:
+            review_reasons.append(
+                "Debt represents a high share of total assets."
+            )
+
+    total_equity = current.get("total_equity")
+
+    if (
+        isinstance(total_equity, (int, float))
+        and total_equity <= 0
+    ):
+        high_attention_reasons.append(
+            "Reported equity is non-positive, which weakens leverage coverage."
         )
+    elif debt_to_equity is not None:
+        if debt_to_equity > 3.0:
+            high_attention_reasons.append(
+                "Debt is more than three times reported equity."
+            )
+        elif debt_to_equity > 2.0:
+            review_reasons.append(
+                "Debt is more than twice reported equity."
+            )
 
+    # ------------------------------------------------------------
+    # Change-based financing signals
+    # ------------------------------------------------------------
     if debt_growth is not None and debt_growth > 25:
-        if current_ratio is not None and current_ratio < 1.0:
-            status = "High Attention"
-        elif status == "Normal":
-            status = "Review"
-
-        reasons.append(
+        review_reasons.append(
             "Debt has increased materially compared with the previous period."
         )
 
     if cash_growth is not None and cash_growth < -20:
-        if status == "Normal":
-            status = "Review"
-
-        reasons.append(
+        review_reasons.append(
             "Cash and cash equivalents have declined materially."
         )
 
-    if not reasons:
-        interpretation = (
-            "No major liquidity or leverage pressure was detected "
-            "under the current heuristic rules."
-        )
-        action = (
-            "Continue monitoring liquidity, debt, and cash trends."
-        )
+    # ------------------------------------------------------------
+    # Overall status
+    # ------------------------------------------------------------
+    if high_attention_reasons:
+        status = "High Attention"
+
+    elif review_reasons:
+        status = "Review"
+
     else:
-        interpretation = " ".join(reasons)
-        action = (
-            "Review debt maturity, liquidity facilities, current liabilities, "
-            "cash generation, and financing commentary."
+        status = "Normal"
+
+    # ------------------------------------------------------------
+    # Analyst interpretation
+    # ------------------------------------------------------------
+    if status == "Normal":
+        evidence_parts = []
+
+        if current_ratio is not None:
+            evidence_parts.append(
+                f"The current ratio is {current_ratio:.2f}x."
+            )
+
+        if debt_to_assets is not None:
+            evidence_parts.append(
+                f"Debt represents {debt_to_assets * 100:.1f}% of total assets."
+            )
+
+        if debt_to_equity is not None:
+            evidence_parts.append(
+                f"Debt-to-equity is {debt_to_equity:.2f}x."
+            )
+
+        if cash_to_debt is not None:
+            evidence_parts.append(
+                f"Cash covers total debt at {cash_to_debt:.2f}x."
+            )
+
+        evidence_parts.append(
+            "No major liquidity or leverage pressure was detected "
+            "under the current screening rules."
         )
+
+        interpretation = " ".join(evidence_parts)
+
+        action = (
+            "Continue monitoring liquidity, debt, cash coverage, "
+            "and financing trends."
+        )
+
+    else:
+        interpretation = " ".join(
+            high_attention_reasons + review_reasons
+        )
+
+        if status == "High Attention":
+            action = (
+                "Prioritise review of debt maturity, liquidity facilities, "
+                "cash generation, covenant headroom, and financing commentary."
+            )
+        else:
+            action = (
+                "Review debt maturity, liquidity facilities, current liabilities, "
+                "cash generation, and financing commentary."
+            )
 
     return _signal(
         area="Liquidity & Leverage",
@@ -398,6 +516,21 @@ def liquidity_leverage_signal(
             "current_ratio": (
                 round(current_ratio, 2)
                 if current_ratio is not None
+                else None
+            ),
+            "debt_to_assets_pct": (
+                round(debt_to_assets * 100, 2)
+                if debt_to_assets is not None
+                else None
+            ),
+            "debt_to_equity": (
+                round(debt_to_equity, 2)
+                if debt_to_equity is not None
+                else None
+            ),
+            "cash_to_debt": (
+                round(cash_to_debt, 2)
+                if cash_to_debt is not None
                 else None
             ),
             "debt_growth_pct": (
@@ -412,8 +545,6 @@ def liquidity_leverage_signal(
             ),
         },
     )
-
-
 
 def _build_executive_assessment(
     signals: list[dict[str, Any]],
@@ -1173,6 +1304,189 @@ def _build_next_fiscal_year_outlook(
             "a valuation target, or investment advice."
         ),
     }
+
+
+
+def _build_forward_looking_executive_conclusion(
+    executive_assessment: dict[str, Any],
+    trend_context: dict[str, Any],
+    outlook: dict[str, Any],
+) -> str:
+    """
+    Synthesize multi-year momentum, current financial signals and the
+    moderated next-fiscal-year scenario into one executive conclusion.
+
+    This is analytical scenario synthesis, not company guidance or
+    an investment forecast.
+    """
+
+    core_metrics = [
+        ("revenue", "Revenue"),
+        ("net_income", "Net Income"),
+        ("operating_cash_flow", "Operating Cash Flow"),
+    ]
+
+    metric_trends = trend_context.get("metric_trends", {})
+
+    accelerating = []
+    moderating = []
+
+    for metric_key, display_name in core_metrics:
+        trend = metric_trends.get(metric_key, {})
+
+        recent_cagr = trend.get("recent_cagr_pct")
+        full_cagr = trend.get("full_history_cagr_pct")
+
+        if not isinstance(recent_cagr, (int, float)):
+            continue
+
+        if not isinstance(full_cagr, (int, float)):
+            continue
+
+        gap = recent_cagr - full_cagr
+
+        if gap >= 10:
+            accelerating.append(display_name)
+        elif gap <= -10:
+            moderating.append(display_name)
+
+    parts = []
+
+    # --------------------------------------------------------
+    # Historical momentum
+    # --------------------------------------------------------
+
+    if len(accelerating) == len(core_metrics):
+        parts.append(
+            "Recent 3-year growth is running above the full-period trend "
+            "across Revenue, Net Income and Operating Cash Flow, indicating "
+            "broad-based acceleration in the historical record."
+        )
+
+    elif accelerating:
+        parts.append(
+            "Recent 3-year growth is running above the longer-term trend for "
+            + ", ".join(accelerating)
+            + "."
+        )
+
+    elif moderating:
+        parts.append(
+            "Recent 3-year growth is running below the longer-term trend for "
+            + ", ".join(moderating)
+            + ", indicating some moderation in recent momentum."
+        )
+
+    # --------------------------------------------------------
+    # Forward scenario
+    # --------------------------------------------------------
+
+    available_items = [
+        item
+        for item in outlook.get("items", [])
+        if item.get("status") == "Available"
+    ]
+
+    if available_items:
+        directions = [
+            item.get("direction")
+            for item in available_items
+        ]
+
+        names = [
+            item.get("display_name", item.get("metric", "Metric"))
+            for item in available_items
+        ]
+
+        if all(direction == "Expansion" for direction in directions):
+            if len(names) == 3:
+                parts.append(
+                    "The moderated historical scenario therefore points to "
+                    "continued expansion across all three core metrics in the "
+                    "next fiscal year."
+                )
+            else:
+                parts.append(
+                    "The moderated historical scenario points to continued "
+                    "expansion across "
+                    + ", ".join(names)
+                    + " in the next fiscal year."
+                )
+
+        elif all(
+            direction == "Broadly stable"
+            for direction in directions
+        ):
+            parts.append(
+                "The moderated historical scenario points to broadly stable "
+                "performance across the available core metrics in the next "
+                "fiscal year."
+            )
+
+        else:
+            expanding = [
+                item.get("display_name", item.get("metric", "Metric"))
+                for item in available_items
+                if item.get("direction") == "Expansion"
+            ]
+
+            contracting = [
+                item.get("display_name", item.get("metric", "Metric"))
+                for item in available_items
+                if item.get("direction") == "Contraction"
+            ]
+
+            if expanding:
+                parts.append(
+                    "The moderated historical scenario points to expansion in "
+                    + ", ".join(expanding)
+                    + "."
+                )
+
+            if contracting:
+                parts.append(
+                    "At the same time, the scenario indicates contraction in "
+                    + ", ".join(contracting)
+                    + "."
+                )
+
+    # --------------------------------------------------------
+    # Current watchpoint
+    # --------------------------------------------------------
+
+    primary_review_point = executive_assessment.get(
+        "primary_review_point"
+    )
+
+    if primary_review_point:
+        clean_watchpoint = str(primary_review_point).strip().rstrip(".")
+
+        parts.append(
+            "However, the principal near-term watchpoint remains: "
+            + clean_watchpoint
+            + "."
+        )
+
+        if executive_assessment.get("evidence_gap"):
+            parts.append(
+                "Confidence in the scenario should therefore remain "
+                "conditional on the recommended follow-up review and "
+                "additional operating evidence."
+            )
+
+    else:
+        parts.append(
+            "No material financial watchpoint is currently identified under "
+            "the analytical rules, although continued monitoring remains "
+            "appropriate."
+        )
+
+    parts.append(
+        "This conclusion is a scenario-based synthesis of historical "
+        "financial data rather than company guidance or an investment forecast."
+    )
+
+    return " ".join(parts)
 
 
 def analyze_financial_intelligence(

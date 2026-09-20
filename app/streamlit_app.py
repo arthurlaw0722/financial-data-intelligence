@@ -27,6 +27,7 @@ from analytics.financial_intelligence import (
     analyze_financial_intelligence,
     _build_multi_year_trend_context,
     _build_next_fiscal_year_outlook,
+    _build_forward_looking_executive_conclusion,
 )
 from analytics.financial_statement_adapter import (
     detect_financial_statement_schema,
@@ -1386,6 +1387,14 @@ Examples of recognised metrics include `revenue`,
             periods.get("history", [])
         )
 
+        forward_looking_conclusion = (
+            _build_forward_looking_executive_conclusion(
+                result.get("executive_assessment", {}),
+                trend_context,
+                next_fiscal_year_outlook,
+            )
+        )
+
     except ValueError as exc:
         st.error(str(exc))
         return
@@ -1456,10 +1465,102 @@ Examples of recognised metrics include `revenue`,
     )
 
     trend_summary = executive.get("trend_summary")
+    primary_review_point = executive.get("primary_review_point")
 
-    if trend_summary:
-        st.markdown("**Multi-year context**")
-        st.write(trend_summary)
+    trend_summary_lower = (trend_summary or "").lower()
+
+    if "broad-based acceleration" in trend_summary_lower:
+        momentum_label = "Broad-based acceleration"
+    elif (
+        "below the longer-term trend" in trend_summary_lower
+        or "moderation" in trend_summary_lower
+    ):
+        momentum_label = "Moderating"
+    elif trend_summary:
+        momentum_label = "Mixed trend"
+    else:
+        momentum_label = "Insufficient history"
+
+    available_outlook_items = [
+        item
+        for item in next_fiscal_year_outlook.get("items", [])
+        if item.get("status") == "Available"
+    ]
+
+    outlook_directions = [
+        item.get("direction")
+        for item in available_outlook_items
+        if item.get("direction")
+    ]
+
+    if outlook_directions and all(
+        direction == "Expansion"
+        for direction in outlook_directions
+    ):
+        scenario_label = "Expansion"
+        scenario_caption = (
+            f"Across {len(outlook_directions)} core metrics"
+        )
+    elif outlook_directions and all(
+        direction == "Contraction"
+        for direction in outlook_directions
+    ):
+        scenario_label = "Contraction"
+        scenario_caption = (
+            f"Across {len(outlook_directions)} core metrics"
+        )
+    elif outlook_directions:
+        scenario_label = "Mixed outlook"
+        scenario_caption = "Core metrics point in different directions"
+    else:
+        scenario_label = "Insufficient history"
+        scenario_caption = "No usable next-year trend scenario"
+
+    if primary_review_point:
+        review_label = "Conditional"
+        review_caption = "Material watchpoint remains"
+    else:
+        review_label = "Clear"
+        review_caption = "No material watchpoint under current rules"
+
+    st.markdown("#### Executive Outlook")
+
+    outlook_col1, outlook_col2, outlook_col3 = st.columns(3)
+
+    with outlook_col1:
+        with st.container(border=True):
+            st.caption("Momentum")
+            st.markdown(f"**{momentum_label}**")
+            st.caption(
+                "Recent 3-year CAGR vs full-period history"
+            )
+
+    with outlook_col2:
+        with st.container(border=True):
+            st.caption("Next-year scenario")
+            st.markdown(f"**{scenario_label}**")
+            st.caption(scenario_caption)
+
+    with outlook_col3:
+        with st.container(border=True):
+            st.caption("Review posture")
+            st.markdown(f"**{review_label}**")
+            st.caption(review_caption)
+
+    if trend_summary or forward_looking_conclusion:
+        with st.expander(
+            "Executive synthesis",
+            expanded=False,
+        ):
+            if trend_summary:
+                st.markdown("**Multi-year context**")
+                st.write(trend_summary)
+
+            if forward_looking_conclusion:
+                st.markdown(
+                    "**Forward-looking executive conclusion**"
+                )
+                st.write(forward_looking_conclusion)
 
     executive_col1, executive_col2 = st.columns(
         [1, 1]
@@ -1587,46 +1688,185 @@ Examples of recognised metrics include `revenue`,
 
     st.caption(trend_period_label)
 
-    trend_metric_labels = {
+    core_trend_metric_labels = {
         "revenue": "Revenue",
         "net_income": "Net Income",
         "operating_cash_flow": "Operating Cash Flow",
     }
 
-    trend_rows = []
+    supporting_trend_metric_labels = {
+        "accounts_receivable": "Accounts Receivable",
+        "inventory": "Inventory",
+        "cash_and_equivalents": "Cash & Equivalents",
+        "total_debt": "Total Debt",
+        "total_assets": "Total Assets",
+    }
 
-    for metric_name, display_name in trend_metric_labels.items():
-        trend = trend_context.get(
-            "metric_trends",
-            {},
-        ).get(
-            metric_name,
-            {},
-        )
+    def build_trend_rows(metric_labels):
+        rows = []
 
-        trend_rows.append(
-            {
-                "Metric": display_name,
-                "Latest": format_financial_value(
-                    trend.get("latest_value")
-                ),
-                "Latest YoY": format_percentage(
-                    trend.get("latest_yoy_pct")
-                ),
-                "Recent CAGR (3Y)": format_percentage(
-                    trend.get("recent_cagr_pct")
-                ),
-                "Full-period CAGR": format_percentage(
-                    trend.get("full_history_cagr_pct")
-                ),
-            }
-        )
+        for metric_name, display_name in metric_labels.items():
+            trend = trend_context.get(
+                "metric_trends",
+                {},
+            ).get(
+                metric_name,
+                {},
+            )
+
+            if trend.get("latest_value") is None:
+                continue
+
+            rows.append(
+                {
+                    "Metric": display_name,
+                    "Latest": format_financial_value(
+                        trend.get("latest_value")
+                    ),
+                    "Latest YoY": format_percentage(
+                        trend.get("latest_yoy_pct")
+                    ),
+                    "Recent CAGR (3Y)": format_percentage(
+                        trend.get("recent_cagr_pct")
+                    ),
+                    "Full-period CAGR": format_percentage(
+                        trend.get("full_history_cagr_pct")
+                    ),
+                }
+            )
+
+        return rows
+
+    core_trend_rows = build_trend_rows(
+        core_trend_metric_labels
+    )
+
+    st.markdown("**Core Performance Trends**")
 
     st.dataframe(
-        pd.DataFrame(trend_rows),
+        pd.DataFrame(core_trend_rows),
         hide_index=True,
         use_container_width=True,
     )
+
+    supporting_trend_rows = build_trend_rows(
+        supporting_trend_metric_labels
+    )
+
+    if supporting_trend_rows:
+        st.markdown("**Financial Position & Operating Trends**")
+        st.caption(
+            "Supporting balance-sheet and working-capital trends. "
+            "These metrics inform financial review but are not used "
+            "as direct next-year forecast targets."
+        )
+
+        st.dataframe(
+            pd.DataFrame(supporting_trend_rows),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+    # Financial-position ratios derived from the latest available period.
+    latest_metric_trends = trend_context.get("metric_trends", {})
+
+    def latest_metric_value(metric_name):
+        value = latest_metric_trends.get(
+            metric_name,
+            {},
+        ).get("latest_value")
+
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    current_assets = latest_metric_value("current_assets")
+    current_liabilities = latest_metric_value("current_liabilities")
+    total_debt = latest_metric_value("total_debt")
+    total_assets = latest_metric_value("total_assets")
+    total_equity = latest_metric_value("total_equity")
+    cash = latest_metric_value("cash_and_equivalents")
+
+    signals = result["signals"]
+
+    liquidity_signal = next(
+        (
+            signal
+            for signal in signals
+            if signal.get("area") == "Liquidity & Leverage"
+        ),
+        {},
+    )
+
+    liquidity_metrics = liquidity_signal.get("metrics", {})
+
+    current_ratio = liquidity_metrics.get("current_ratio")
+    debt_to_assets_pct = liquidity_metrics.get("debt_to_assets_pct")
+    debt_to_equity = liquidity_metrics.get("debt_to_equity")
+    cash_to_debt = liquidity_metrics.get("cash_to_debt")
+
+    # The engine stores Debt / Assets as percentage points
+    # (for example 4.1 means 4.1%), while the existing UI formatter
+    # expects a decimal ratio.
+    debt_to_assets = (
+        debt_to_assets_pct / 100
+        if debt_to_assets_pct is not None
+        else None
+    )
+
+    if any(
+        ratio is not None
+        for ratio in [
+            current_ratio,
+            debt_to_assets,
+            debt_to_equity,
+            cash_to_debt,
+        ]
+    ):
+        st.markdown("### Financial Position Ratios")
+        st.caption(
+            "Latest-period balance-sheet ratios used to support "
+            "liquidity and leverage review."
+        )
+
+        ratio_col1, ratio_col2, ratio_col3, ratio_col4 = st.columns(4)
+
+        ratio_col1.metric(
+            "Current Ratio",
+            (
+                f"{current_ratio:.2f}x"
+                if current_ratio is not None
+                else "N/A"
+            ),
+        )
+
+        ratio_col2.metric(
+            "Debt / Assets",
+            (
+                f"{debt_to_assets:.1%}"
+                if debt_to_assets is not None
+                else "N/A"
+            ),
+        )
+
+        ratio_col3.metric(
+            "Debt / Equity",
+            (
+                f"{debt_to_equity:.2f}x"
+                if debt_to_equity is not None
+                else "N/A"
+            ),
+        )
+
+        ratio_col4.metric(
+            "Cash / Debt",
+            (
+                f"{cash_to_debt:.2f}x"
+                if cash_to_debt is not None
+                else "N/A"
+            ),
+        )
 
     st.markdown("### Next Fiscal Year Outlook")
 
@@ -1686,7 +1926,6 @@ Examples of recognised metrics include `revenue`,
 
     st.markdown("### Financial Signals")
 
-    signals = result["signals"]
     signal_columns = st.columns(len(signals))
 
     for column, signal in zip(signal_columns, signals):
