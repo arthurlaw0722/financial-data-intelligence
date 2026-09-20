@@ -242,8 +242,676 @@ def working_capital_signal(
                 if ar_gap is not None
                 else None
             ),
+            "inventory_vs_revenue_gap_pp": (
+                round(inventory_gap, 2)
+                if inventory_gap is not None
+                else None
+            ),
         },
     )
+
+
+
+def _build_working_capital_diagnostic(
+    signals: list[dict[str, Any]],
+    trend_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Build a structured analyst-style diagnostic for working-capital signals.
+
+    The diagnostic separates observed evidence from possible explanations.
+    It does not infer management intent or claim causality from financial
+    statement movements alone.
+    """
+
+    working_signal = next(
+        (
+            signal
+            for signal in signals
+            if signal.get("area") == "Working Capital"
+        ),
+        None,
+    )
+
+    earnings_signal = next(
+        (
+            signal
+            for signal in signals
+            if signal.get("area") == "Earnings Quality"
+        ),
+        None,
+    )
+
+    if not working_signal:
+        return {
+            "status": "Unavailable",
+            "observed_issue": (
+                "Working-capital diagnostic is unavailable because the "
+                "underlying signal was not produced."
+            ),
+            "supporting_evidence": [],
+            "historical_pattern": (
+                "Insufficient information to assess the historical pattern."
+            ),
+            "historical_pattern_label": "Unavailable",
+            "interpretation": (
+                "No diagnostic interpretation is available."
+            ),
+            "alternative_explanations": [],
+            "evidence_gaps": [],
+            "analyst_action": (
+                "Confirm that revenue, receivables and inventory data are "
+                "available for comparable fiscal periods."
+            ),
+            "metrics": {},
+        }
+
+    metrics = working_signal.get("metrics", {})
+    earnings_metrics = (
+        earnings_signal.get("metrics", {})
+        if earnings_signal
+        else {}
+    )
+
+    def is_number(value: Any) -> bool:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    revenue_growth = metrics.get("revenue_growth_pct")
+    receivables_growth = metrics.get("receivables_growth_pct")
+    inventory_growth = metrics.get("inventory_growth_pct")
+    receivables_gap = metrics.get("receivables_vs_revenue_gap_pp")
+    inventory_gap = metrics.get("inventory_vs_revenue_gap_pp")
+    operating_cash_flow_growth = earnings_metrics.get(
+        "operating_cash_flow_growth_pct"
+    )
+
+    inventory_flagged = (
+        is_number(inventory_gap)
+        and inventory_gap > 15
+    )
+    receivables_flagged = (
+        is_number(receivables_gap)
+        and receivables_gap > 10
+    )
+
+    if inventory_flagged and receivables_flagged:
+        dominant_metric = (
+            "inventory"
+            if inventory_gap >= receivables_gap
+            else "accounts_receivable"
+        )
+    elif inventory_flagged:
+        dominant_metric = "inventory"
+    elif receivables_flagged:
+        dominant_metric = "accounts_receivable"
+    else:
+        dominant_metric = None
+
+    # ------------------------------------------------------------
+    # Observed issue
+    # ------------------------------------------------------------
+    issue_parts = []
+
+    if inventory_flagged and is_number(inventory_growth):
+        issue_parts.append(
+            "Inventory growth exceeded revenue growth by "
+            f"{inventory_gap:.2f} percentage points "
+            f"({inventory_growth:.2f}% vs "
+            f"{revenue_growth:.2f}%)."
+        )
+
+    if receivables_flagged and is_number(receivables_growth):
+        issue_parts.append(
+            "Receivables growth exceeded revenue growth by "
+            f"{receivables_gap:.2f} percentage points "
+            f"({receivables_growth:.2f}% vs "
+            f"{revenue_growth:.2f}%)."
+        )
+
+    if issue_parts:
+        observed_issue = " ".join(issue_parts)
+    else:
+        observed_issue = (
+            "No material receivables or inventory divergence from revenue "
+            "was identified under the current working-capital rules."
+        )
+
+    # ------------------------------------------------------------
+    # Supporting cross-statement evidence
+    # ------------------------------------------------------------
+    supporting_evidence = []
+
+    if is_number(revenue_growth):
+        supporting_evidence.append(
+            f"Revenue grew {revenue_growth:.2f}% in the latest fiscal year."
+        )
+
+    if is_number(receivables_gap):
+        if abs(receivables_gap) <= 10:
+            supporting_evidence.append(
+                "Receivables growth remained broadly aligned with revenue, "
+                f"with a {receivables_gap:+.2f} percentage-point gap."
+            )
+        elif receivables_gap > 10:
+            supporting_evidence.append(
+                "Receivables growth ran ahead of revenue by "
+                f"{receivables_gap:.2f} percentage points."
+            )
+        else:
+            supporting_evidence.append(
+                "Receivables growth was below revenue growth by "
+                f"{abs(receivables_gap):.2f} percentage points."
+            )
+
+    if is_number(inventory_gap):
+        if abs(inventory_gap) <= 15:
+            supporting_evidence.append(
+                "Inventory growth remained reasonably aligned with revenue, "
+                f"with a {inventory_gap:+.2f} percentage-point gap."
+            )
+        elif inventory_gap > 15:
+            supporting_evidence.append(
+                "Inventory growth ran ahead of revenue by "
+                f"{inventory_gap:.2f} percentage points."
+            )
+        else:
+            supporting_evidence.append(
+                "Inventory growth was below revenue growth by "
+                f"{abs(inventory_gap):.2f} percentage points."
+            )
+
+    if is_number(operating_cash_flow_growth):
+        direction = (
+            "increased"
+            if operating_cash_flow_growth >= 0
+            else "declined"
+        )
+        supporting_evidence.append(
+            "Operating cash flow "
+            f"{direction} {abs(operating_cash_flow_growth):.2f}% "
+            "over the same period."
+        )
+
+    # ------------------------------------------------------------
+    # Historical intensity analysis
+    # ------------------------------------------------------------
+    metric_trends = (
+        (trend_context or {}).get("metric_trends", {})
+    )
+
+    revenue_series = (
+        metric_trends
+        .get("revenue", {})
+        .get("series", [])
+    )
+
+    dominant_series = (
+        metric_trends
+        .get(dominant_metric, {})
+        .get("series", [])
+        if dominant_metric
+        else []
+    )
+
+    revenue_by_period = {
+        str(item.get("period")): item.get("value")
+        for item in revenue_series
+        if item.get("period") is not None
+    }
+
+    intensity_series = []
+
+    for item in dominant_series:
+        period = str(item.get("period"))
+        driver_value = item.get("value")
+        revenue_value = revenue_by_period.get(period)
+
+        if (
+            is_number(driver_value)
+            and is_number(revenue_value)
+            and revenue_value > 0
+            and driver_value >= 0
+        ):
+            intensity_series.append(
+                {
+                    "period": period,
+                    "ratio_pct": round(
+                        driver_value / revenue_value * 100,
+                        2,
+                    ),
+                }
+            )
+
+    historical_pattern_label = "Insufficient history"
+    historical_pattern = (
+        "There is not enough aligned multi-year history to determine "
+        "whether the latest working-capital divergence is persistent."
+    )
+
+    historical_level_context = {
+        "label": "Insufficient history",
+        "latest_ratio_pct": None,
+        "prior_median_pct": None,
+        "prior_min_pct": None,
+        "prior_max_pct": None,
+        "latest_vs_median_pct": None,
+        "interpretation": (
+            "There is not enough prior history to assess whether the "
+            "latest working-capital intensity is unusual."
+        ),
+    }
+
+    if len(intensity_series) >= 3:
+        ratios = [
+            item["ratio_pct"]
+            for item in intensity_series
+        ]
+
+        latest_ratio = ratios[-1]
+        previous_ratio = ratios[-2]
+        recent_ratios = ratios[-4:]
+
+        prior_ratios = ratios[:-1]
+
+        if len(prior_ratios) >= 2:
+            sorted_prior = sorted(prior_ratios)
+            midpoint = len(sorted_prior) // 2
+
+            if len(sorted_prior) % 2 == 0:
+                prior_median = (
+                    sorted_prior[midpoint - 1]
+                    + sorted_prior[midpoint]
+                ) / 2
+            else:
+                prior_median = sorted_prior[midpoint]
+
+            prior_min = min(prior_ratios)
+            prior_max = max(prior_ratios)
+
+            latest_vs_median_pct = (
+                ((latest_ratio - prior_median) / abs(prior_median)) * 100
+                if prior_median != 0
+                else None
+            )
+
+            if latest_ratio > prior_max:
+                level_label = "Above historical range"
+                level_interpretation = (
+                    f"The latest intensity of {latest_ratio:.2f}% is above "
+                    f"the prior historical maximum of {prior_max:.2f}%."
+                )
+
+            elif latest_ratio < prior_min:
+                level_label = "Below historical range"
+                level_interpretation = (
+                    f"The latest intensity of {latest_ratio:.2f}% is below "
+                    f"the prior historical minimum of {prior_min:.2f}%."
+                )
+
+            else:
+                level_label = "Within historical range"
+                level_interpretation = (
+                    f"The latest intensity of {latest_ratio:.2f}% remains "
+                    f"within the prior historical range of "
+                    f"{prior_min:.2f}% to {prior_max:.2f}% and compares "
+                    f"with a prior median of {prior_median:.2f}%."
+                )
+
+            historical_level_context = {
+                "label": level_label,
+                "latest_ratio_pct": round(latest_ratio, 2),
+                "prior_median_pct": round(prior_median, 2),
+                "prior_min_pct": round(prior_min, 2),
+                "prior_max_pct": round(prior_max, 2),
+                "latest_vs_median_pct": (
+                    round(latest_vs_median_pct, 2)
+                    if latest_vs_median_pct is not None
+                    else None
+                ),
+                "interpretation": level_interpretation,
+            }
+
+        latest_change_pp = latest_ratio - previous_ratio
+
+        relative_change_pct = None
+        if previous_ratio != 0:
+            relative_change_pct = (
+                latest_change_pp
+                / abs(previous_ratio)
+                * 100
+            )
+
+        increasing_steps = sum(
+            current_value > prior_value
+            for prior_value, current_value
+            in zip(recent_ratios, recent_ratios[1:])
+        )
+
+        decreasing_steps = sum(
+            current_value < prior_value
+            for prior_value, current_value
+            in zip(recent_ratios, recent_ratios[1:])
+        )
+
+        driver_label = (
+            "Inventory intensity"
+            if dominant_metric == "inventory"
+            else "Receivables intensity"
+        )
+
+        if (
+            len(recent_ratios) >= 4
+            and increasing_steps == len(recent_ratios) - 1
+        ):
+            historical_pattern_label = "Persistent build"
+            historical_pattern = (
+                f"{driver_label} has increased across each of the latest "
+                f"{len(recent_ratios)} available fiscal periods, reaching "
+                f"{latest_ratio:.2f}% of revenue in the latest period."
+            )
+
+        elif (
+            len(recent_ratios) >= 4
+            and decreasing_steps == len(recent_ratios) - 1
+        ):
+            historical_pattern_label = "Persistent easing"
+            historical_pattern = (
+                f"{driver_label} has declined across each of the latest "
+                f"{len(recent_ratios)} available fiscal periods, reaching "
+                f"{latest_ratio:.2f}% of revenue in the latest period."
+            )
+
+        elif (
+            latest_change_pp >= 1.5
+            and relative_change_pct is not None
+            and relative_change_pct >= 15
+        ):
+            historical_pattern_label = "Recent step-up"
+            historical_pattern = (
+                f"{driver_label} increased from "
+                f"{previous_ratio:.2f}% to {latest_ratio:.2f}% of revenue "
+                "in the latest fiscal period, indicating a recent step-up "
+                "rather than a clearly persistent multi-year build."
+            )
+
+        elif (
+            abs(latest_change_pp) <= 1.0
+            and max(ratios[-3:]) - min(ratios[-3:]) <= 2.0
+        ):
+            historical_pattern_label = "Broadly stable"
+            historical_pattern = (
+                f"{driver_label} has remained broadly stable across the "
+                f"latest three fiscal periods and is currently "
+                f"{latest_ratio:.2f}% of revenue."
+            )
+
+        else:
+            historical_pattern_label = "Mixed trend"
+            historical_pattern = (
+                f"{driver_label} shows a mixed multi-year pattern. "
+                f"The latest level is {latest_ratio:.2f}% of revenue, "
+                f"compared with {previous_ratio:.2f}% in the prior period."
+            )
+
+    # ------------------------------------------------------------
+    # Diagnostic interpretation
+    # ------------------------------------------------------------
+    earnings_status = (
+        earnings_signal.get("status")
+        if earnings_signal
+        else None
+    )
+
+    if working_signal.get("status") == "Normal":
+        interpretation = (
+            "The available evidence does not currently indicate a material "
+            "working-capital divergence from revenue."
+        )
+
+    elif inventory_flagged and not receivables_flagged:
+        if (
+            is_number(operating_cash_flow_growth)
+            and operating_cash_flow_growth >= 0
+            and earnings_status == "Normal"
+        ):
+            interpretation = (
+                "The available evidence suggests that the working-capital "
+                "divergence is concentrated in inventory rather than a "
+                "broader deterioration across receivables and cash "
+                "generation."
+            )
+        else:
+            interpretation = (
+                "The main working-capital divergence is concentrated in "
+                "inventory. Cash-generation evidence should be reviewed "
+                "alongside the inventory build before drawing a stronger "
+                "conclusion."
+            )
+
+    elif receivables_flagged and not inventory_flagged:
+        interpretation = (
+            "The main working-capital divergence is concentrated in "
+            "receivables, which may indicate changing customer mix, payment "
+            "terms or collection performance and warrants further review."
+        )
+
+    elif inventory_flagged and receivables_flagged:
+        interpretation = (
+            "Both inventory and receivables are expanding faster than "
+            "revenue, indicating a broader working-capital build rather "
+            "than a single-account divergence."
+        )
+
+    else:
+        interpretation = working_signal.get(
+            "interpretation",
+            "Working-capital movements require further review.",
+        )
+
+    # ------------------------------------------------------------
+    # Historical level context for the diagnostic interpretation
+    # ------------------------------------------------------------
+    level_label = historical_level_context.get("label")
+    latest_ratio_pct = historical_level_context.get("latest_ratio_pct")
+    prior_median_pct = historical_level_context.get("prior_median_pct")
+    prior_max_pct = historical_level_context.get("prior_max_pct")
+    latest_vs_median_pct = historical_level_context.get(
+        "latest_vs_median_pct"
+    )
+
+    driver_name = (
+        "inventory intensity"
+        if dominant_metric == "inventory"
+        else "receivables intensity"
+        if dominant_metric == "accounts_receivable"
+        else "working-capital intensity"
+    )
+
+    if working_signal.get("status") != "Normal":
+        if level_label == "Within historical range":
+            context_sentence = (
+                f"However, the latest {driver_name} of "
+                f"{latest_ratio_pct:.2f}% remains within the company's "
+                f"prior historical range"
+            )
+
+            if isinstance(prior_median_pct, (int, float)):
+                context_sentence += (
+                    f" and compares with a prior median of "
+                    f"{prior_median_pct:.2f}%"
+                )
+
+            context_sentence += ". "
+
+            if isinstance(latest_vs_median_pct, (int, float)):
+                context_sentence += (
+                    f"The latest level is {latest_vs_median_pct:.2f}% "
+                    "above the prior median. "
+                )
+
+            context_sentence += (
+                "This tempers the severity of the movement signal and "
+                "does not by itself indicate persistent structural "
+                "deterioration."
+            )
+
+            interpretation = (
+                interpretation.rstrip()
+                + " "
+                + context_sentence
+            )
+
+        elif level_label == "Above historical range":
+            context_sentence = (
+                f"The latest {driver_name} of {latest_ratio_pct:.2f}% "
+                "is also above the company's prior historical range"
+            )
+
+            if isinstance(prior_max_pct, (int, float)):
+                context_sentence += (
+                    f", exceeding the previous maximum of "
+                    f"{prior_max_pct:.2f}%"
+                )
+
+            context_sentence += (
+                ". This strengthens the case for further analyst review."
+            )
+
+            interpretation = (
+                interpretation.rstrip()
+                + " "
+                + context_sentence
+            )
+
+        elif level_label == "Below historical range":
+            interpretation = (
+                interpretation.rstrip()
+                + " "
+                + (
+                    f"Despite the latest growth divergence, the current "
+                    f"{driver_name} remains below its prior historical "
+                    "range, which weakens the evidence of structural "
+                    "working-capital deterioration."
+                )
+            )
+
+    # ------------------------------------------------------------
+    # Alternative explanations and evidence gaps
+    # ------------------------------------------------------------
+    alternative_explanations = []
+    evidence_gaps = []
+
+    if inventory_flagged:
+        alternative_explanations.extend(
+            [
+                (
+                    "Planned inventory build ahead of expected demand, "
+                    "product launches or capacity expansion."
+                ),
+                (
+                    "Supply-chain buffering or deliberate inventory "
+                    "positioning."
+                ),
+                (
+                    "Slower inventory conversion or weaker-than-expected "
+                    "sell-through."
+                ),
+            ]
+        )
+
+        evidence_gaps.extend(
+            [
+                "Inventory turnover or days inventory outstanding.",
+                "Cost of revenue and gross-margin movement.",
+                "Inventory ageing, write-down or obsolescence disclosures.",
+                "Management commentary explaining the inventory build.",
+            ]
+        )
+
+    if receivables_flagged:
+        alternative_explanations.extend(
+            [
+                (
+                    "Sales mix shifting toward customers or channels with "
+                    "longer payment terms."
+                ),
+                "Temporary collection timing effects.",
+                (
+                    "Looser credit terms or deterioration in collection "
+                    "performance."
+                ),
+            ]
+        )
+
+        evidence_gaps.extend(
+            [
+                "Days sales outstanding.",
+                "Receivables ageing and bad-debt allowance information.",
+                "Customer payment terms and channel mix.",
+                "Management commentary on collection performance.",
+            ]
+        )
+
+    if not alternative_explanations:
+        alternative_explanations.append(
+            "No material working-capital divergence currently requires a "
+            "specific causal hypothesis."
+        )
+
+    if not evidence_gaps:
+        evidence_gaps.append(
+            "Continue monitoring future revenue, receivables and inventory "
+            "movements for emerging divergence."
+        )
+
+    if inventory_flagged and receivables_flagged:
+        analyst_action = (
+            "Review inventory conversion, receivables collection, margin "
+            "movement and management commentary together to determine "
+            "whether the broader working-capital build is operationally "
+            "supported."
+        )
+    elif inventory_flagged:
+        analyst_action = (
+            "Review inventory turnover, cost of revenue, gross-margin "
+            "movement and management commentary. Escalate only if the "
+            "inventory build persists, margins weaken, or cash conversion "
+            "deteriorates."
+        )
+    elif receivables_flagged:
+        analyst_action = (
+            "Review days sales outstanding, receivables ageing, customer "
+            "payment terms and management commentary. Escalate if collection "
+            "performance deteriorates or cash conversion weakens."
+        )
+    else:
+        analyst_action = (
+            "Continue monitoring working-capital trends across future "
+            "fiscal periods."
+        )
+
+    return {
+        "status": working_signal.get("status"),
+        "observed_issue": observed_issue,
+        "supporting_evidence": supporting_evidence,
+        "historical_pattern": historical_pattern,
+        "historical_pattern_label": historical_pattern_label,
+        "historical_level_context": historical_level_context,
+        "interpretation": interpretation,
+        "alternative_explanations": alternative_explanations,
+        "evidence_gaps": evidence_gaps,
+        "analyst_action": analyst_action,
+        "metrics": {
+            "revenue_growth_pct": revenue_growth,
+            "receivables_growth_pct": receivables_growth,
+            "inventory_growth_pct": inventory_growth,
+            "receivables_vs_revenue_gap_pp": receivables_gap,
+            "inventory_vs_revenue_gap_pp": inventory_gap,
+            "operating_cash_flow_growth_pct": operating_cash_flow_growth,
+            "dominant_metric": dominant_metric,
+            "intensity_series": intensity_series,
+        },
+    }
 
 
 def earnings_quality_signal(
@@ -1021,6 +1689,7 @@ def _build_multi_year_trend_context(
             "latest_yoy_pct": None,
             "recent_cagr_pct": None,
             "full_history_cagr_pct": None,
+            "series": observations,
         }
 
         if observations:
@@ -1628,6 +2297,11 @@ def analyze_financial_intelligence(
         if signal["status"] != "Normal"
     ]
 
+    working_capital_diagnostic = _build_working_capital_diagnostic(
+        signals,
+        trend_context,
+    )
+
     executive_assessment = _build_executive_assessment(
         signals,
         trend_context=trend_context,
@@ -1753,6 +2427,7 @@ def analyze_financial_intelligence(
         "executive_assessment": executive_assessment,
         "status_counts": status_counts,
         "signals": signals,
+        "working_capital_diagnostic": working_capital_diagnostic,
         "review_priorities": priorities,
         "disclaimer": (
             "Signals are analytical heuristics intended to support review. "
