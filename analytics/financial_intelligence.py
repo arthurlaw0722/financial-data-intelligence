@@ -1481,6 +1481,88 @@ def _build_forward_looking_executive_conclusion(
             "appropriate."
         )
 
+    # ------------------------------------------------------------
+    # Balance-sheet context
+    # ------------------------------------------------------------
+    balance_sheet_summary = executive_assessment.get(
+        "balance_sheet_summary"
+    )
+
+    if balance_sheet_summary:
+        balance_status = balance_sheet_summary.get("status")
+        balance_interpretation = balance_sheet_summary.get(
+            "interpretation"
+        )
+
+        ratio_parts = []
+
+        current_ratio = balance_sheet_summary.get("current_ratio")
+        if isinstance(current_ratio, (int, float)):
+            ratio_parts.append(
+                f"a {current_ratio:.2f}x current ratio"
+            )
+
+        debt_to_assets_pct = balance_sheet_summary.get(
+            "debt_to_assets_pct"
+        )
+        if isinstance(debt_to_assets_pct, (int, float)):
+            ratio_parts.append(
+                f"debt equal to {debt_to_assets_pct:.1f}% of assets"
+            )
+
+        debt_to_equity = balance_sheet_summary.get(
+            "debt_to_equity"
+        )
+        if isinstance(debt_to_equity, (int, float)):
+            ratio_parts.append(
+                f"debt-to-equity of {debt_to_equity:.2f}x"
+            )
+
+        cash_to_debt = balance_sheet_summary.get(
+            "cash_to_debt"
+        )
+        if isinstance(cash_to_debt, (int, float)):
+            ratio_parts.append(
+                f"cash-to-debt of {cash_to_debt:.2f}x"
+            )
+
+        if balance_status == "Normal":
+            if ratio_parts:
+                if len(ratio_parts) == 1:
+                    ratio_text = ratio_parts[0]
+                else:
+                    ratio_text = (
+                        ", ".join(ratio_parts[:-1])
+                        + ", and "
+                        + ratio_parts[-1]
+                    )
+
+                parts.append(
+                    "Liquidity and leverage screening remains normal, "
+                    f"supported by {ratio_text}."
+                )
+            else:
+                parts.append(
+                    "Liquidity and leverage screening remains normal "
+                    "under the current analytical rules."
+                )
+
+        elif balance_status == "Review":
+            sentence = (
+                "Liquidity and leverage screening requires review."
+            )
+            if balance_interpretation:
+                sentence += f" {balance_interpretation}"
+            parts.append(sentence)
+
+        elif balance_status == "High Attention":
+            sentence = (
+                "Liquidity and leverage screening requires high attention."
+            )
+            if balance_interpretation:
+                sentence += f" {balance_interpretation}"
+            parts.append(sentence)
+
     parts.append(
         "This conclusion is a scenario-based synthesis of historical "
         "financial data rather than company guidance or an investment forecast."
@@ -1550,6 +1632,120 @@ def analyze_financial_intelligence(
         signals,
         trend_context=trend_context,
     )
+
+    liquidity_signal = next(
+        (
+            signal
+            for signal in signals
+            if signal.get("area") == "Liquidity & Leverage"
+        ),
+        None,
+    )
+
+    balance_sheet_summary = None
+
+    if liquidity_signal:
+        liquidity_metrics = liquidity_signal.get("metrics", {})
+
+        balance_sheet_summary = {
+            "status": liquidity_signal.get("status"),
+            "current_ratio": liquidity_metrics.get("current_ratio"),
+            "debt_to_assets_pct": liquidity_metrics.get("debt_to_assets_pct"),
+            "debt_to_equity": liquidity_metrics.get("debt_to_equity"),
+            "cash_to_debt": liquidity_metrics.get("cash_to_debt"),
+            "debt_growth_pct": liquidity_metrics.get("debt_growth_pct"),
+            "cash_growth_pct": liquidity_metrics.get("cash_growth_pct"),
+            "interpretation": liquidity_signal.get("interpretation"),
+        }
+
+    executive_assessment["balance_sheet_summary"] = balance_sheet_summary
+
+    if balance_sheet_summary:
+        balance_status = balance_sheet_summary.get("status")
+        balance_interpretation = balance_sheet_summary.get("interpretation")
+
+        ratio_parts = []
+
+        current_ratio = balance_sheet_summary.get("current_ratio")
+        if isinstance(current_ratio, (int, float)):
+            ratio_parts.append(
+                f"a {current_ratio:.2f}x current ratio"
+            )
+
+        debt_to_assets_pct = balance_sheet_summary.get("debt_to_assets_pct")
+        if isinstance(debt_to_assets_pct, (int, float)):
+            ratio_parts.append(
+                f"debt equal to {debt_to_assets_pct:.1f}% of assets"
+            )
+
+        debt_to_equity = balance_sheet_summary.get("debt_to_equity")
+        if isinstance(debt_to_equity, (int, float)):
+            ratio_parts.append(
+                f"debt-to-equity of {debt_to_equity:.2f}x"
+            )
+
+        cash_to_debt = balance_sheet_summary.get("cash_to_debt")
+        if isinstance(cash_to_debt, (int, float)):
+            ratio_parts.append(
+                f"cash-to-debt of {cash_to_debt:.2f}x"
+            )
+
+        if balance_status == "Normal":
+            if ratio_parts:
+                balance_sheet_sentence = (
+                    "Liquidity and leverage screening remains normal, supported by "
+                    + ", ".join(ratio_parts[:-1])
+                    + (
+                        f", and {ratio_parts[-1]}."
+                        if len(ratio_parts) > 1
+                        else f"{ratio_parts[-1]}."
+                    )
+                )
+            else:
+                balance_sheet_sentence = (
+                    "Liquidity and leverage screening remains normal under the "
+                    "current analytical rules."
+                )
+        elif balance_status in {"Review", "High Attention"}:
+            balance_sheet_sentence = (
+                f"Liquidity and leverage screening is {balance_status.lower()}"
+            )
+
+            if balance_interpretation:
+                balance_sheet_sentence += (
+                    f": {balance_interpretation}"
+                )
+            else:
+                balance_sheet_sentence += (
+                    " and warrants additional analyst review."
+                )
+        else:
+            balance_sheet_sentence = None
+
+        existing_conclusion = executive_assessment.get(
+            "forward_looking_conclusion"
+        )
+
+        if existing_conclusion and balance_sheet_sentence:
+            disclaimer = (
+                "This conclusion is a scenario-based synthesis of historical "
+                "financial data rather than company guidance or an investment forecast."
+            )
+
+            if existing_conclusion.endswith(disclaimer):
+                conclusion_body = existing_conclusion[
+                    :-len(disclaimer)
+                ].rstrip()
+
+                executive_assessment["forward_looking_conclusion"] = (
+                    f"{conclusion_body} "
+                    f"{balance_sheet_sentence} "
+                    f"{disclaimer}"
+                )
+            else:
+                executive_assessment["forward_looking_conclusion"] = (
+                    f"{existing_conclusion} {balance_sheet_sentence}"
+                )
 
     return {
         "decision": decision,

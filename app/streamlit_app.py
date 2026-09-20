@@ -1523,9 +1523,53 @@ Examples of recognised metrics include `revenue`,
         review_label = "Clear"
         review_caption = "No material watchpoint under current rules"
 
+    balance_sheet_summary = executive.get(
+        "balance_sheet_summary"
+    ) or {}
+
+    balance_sheet_status = balance_sheet_summary.get("status")
+
+    if balance_sheet_status in {
+        "Normal",
+        "Review",
+        "High Attention",
+    }:
+        balance_sheet_label = balance_sheet_status
+    else:
+        balance_sheet_label = "Limited data"
+
+    balance_caption_parts = []
+
+    balance_current_ratio = balance_sheet_summary.get(
+        "current_ratio"
+    )
+    if isinstance(balance_current_ratio, (int, float)):
+        balance_caption_parts.append(
+            f"Current ratio {balance_current_ratio:.2f}x"
+        )
+
+    balance_debt_assets = balance_sheet_summary.get(
+        "debt_to_assets_pct"
+    )
+    if isinstance(balance_debt_assets, (int, float)):
+        balance_caption_parts.append(
+            f"Debt / Assets {balance_debt_assets:.1f}%"
+        )
+
+    balance_sheet_caption = (
+        " · ".join(balance_caption_parts)
+        if balance_caption_parts
+        else "Balance-sheet coverage is limited"
+    )
+
     st.markdown("#### Executive Outlook")
 
-    outlook_col1, outlook_col2, outlook_col3 = st.columns(3)
+    (
+        outlook_col1,
+        outlook_col2,
+        outlook_col3,
+        outlook_col4,
+    ) = st.columns(4)
 
     with outlook_col1:
         with st.container(border=True):
@@ -1546,6 +1590,12 @@ Examples of recognised metrics include `revenue`,
             st.caption("Review posture")
             st.markdown(f"**{review_label}**")
             st.caption(review_caption)
+
+    with outlook_col4:
+        with st.container(border=True):
+            st.caption("Balance-sheet posture")
+            st.markdown(f"**{balance_sheet_label}**")
+            st.caption(balance_sheet_caption)
 
     if trend_summary or forward_looking_conclusion:
         with st.expander(
