@@ -1399,6 +1399,154 @@ Examples of recognised metrics include `revenue`,
         st.error(str(exc))
         return
 
+    diagnostic = result.get("working_capital_diagnostic", {})
+
+    if diagnostic:
+        st.markdown("### Working Capital Diagnostic")
+
+        historical_level = diagnostic.get(
+            "historical_level_context",
+            {},
+        )
+
+        movement_col, pattern_col, level_col = st.columns(3)
+
+        with movement_col:
+            st.metric(
+                "Movement signal",
+                diagnostic.get("status", "Unavailable"),
+            )
+
+        with pattern_col:
+            st.metric(
+                "Historical pattern",
+                diagnostic.get(
+                    "historical_pattern_label",
+                    "Unavailable",
+                ),
+            )
+
+        with level_col:
+            st.metric(
+                "Historical level",
+                historical_level.get(
+                    "label",
+                    "Unavailable",
+                ),
+            )
+
+        st.caption(
+            "The movement signal identifies unusual recent change, while "
+            "historical context shows whether the current level is unusual "
+            "relative to the company's own history."
+        )
+
+        observed_issue = diagnostic.get("observed_issue")
+        diagnostic_status = diagnostic.get("status")
+
+        if observed_issue:
+            if diagnostic_status == "High Attention":
+                st.warning(observed_issue)
+            elif diagnostic_status == "Review":
+                st.info(observed_issue)
+            else:
+                st.success(observed_issue)
+
+        interpretation = diagnostic.get("interpretation")
+
+        if interpretation:
+            st.markdown("##### Diagnostic interpretation")
+            st.write(interpretation)
+
+        with st.expander("Diagnostic evidence and next steps"):
+            history_col, evidence_col = st.columns(2)
+
+            with history_col:
+                st.markdown("**Historical pattern**")
+                historical_pattern = diagnostic.get(
+                    "historical_pattern"
+                )
+
+                if historical_pattern:
+                    st.write(historical_pattern)
+                else:
+                    st.caption(
+                        "Historical pattern is unavailable."
+                    )
+
+                st.markdown("**Historical level context**")
+                level_interpretation = historical_level.get(
+                    "interpretation"
+                )
+
+                if level_interpretation:
+                    st.write(level_interpretation)
+                else:
+                    st.caption(
+                        "Historical level context is unavailable."
+                    )
+
+            with evidence_col:
+                st.markdown(
+                    "**Evidence supporting the assessment**"
+                )
+
+                supporting_evidence = diagnostic.get(
+                    "supporting_evidence",
+                    [],
+                )
+
+                if supporting_evidence:
+                    st.markdown(
+                        "\n".join(
+                            f"- {item}"
+                            for item in supporting_evidence
+                        )
+                    )
+                else:
+                    st.caption(
+                        "No supporting evidence is available."
+                    )
+
+                st.markdown("**Evidence still required**")
+
+                evidence_gaps = diagnostic.get(
+                    "evidence_gaps",
+                    [],
+                )
+
+                if evidence_gaps:
+                    st.markdown(
+                        "\n".join(
+                            f"- {item}"
+                            for item in evidence_gaps
+                        )
+                    )
+                else:
+                    st.caption(
+                        "No material evidence gaps identified."
+                    )
+
+            alternative_explanations = diagnostic.get(
+                "alternative_explanations",
+                [],
+            )
+
+            if alternative_explanations:
+                st.markdown("**Possible explanations**")
+                st.markdown(
+                    "\n".join(
+                        f"- {item}"
+                        for item in alternative_explanations
+                    )
+                )
+
+            analyst_action = diagnostic.get("analyst_action")
+
+            if analyst_action:
+                st.markdown("**Recommended analyst action**")
+                st.info(analyst_action)
+
     st.markdown("### Overall Assessment")
 
     decision = result["decision"]
