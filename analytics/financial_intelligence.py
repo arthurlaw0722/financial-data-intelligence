@@ -1200,6 +1200,502 @@ def earnings_quality_signal(
     )
 
 
+
+def _build_earnings_quality_diagnostic(
+    signals: list[dict[str, Any]],
+    derived_financial_metrics: dict[str, Any],
+    trend_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Build a structured earnings-quality diagnostic using profit growth,
+    operating cash-flow growth, cash conversion and multi-year context.
+
+    The diagnostic treats ratios as analytical evidence rather than proof
+    of accounting quality or management intent.
+    """
+
+    earnings_signal = next(
+        (
+            signal
+            for signal in signals
+            if signal.get("area") == "Earnings Quality"
+        ),
+        None,
+    )
+
+    if not earnings_signal:
+        return {
+            "status": "Unavailable",
+            "cash_conversion_posture": "Unavailable",
+            "observed_evidence": [],
+            "historical_context": {},
+            "interpretation": (
+                "Earnings-quality diagnostic is unavailable because the "
+                "underlying signal was not produced."
+            ),
+            "evidence_gaps": [],
+            "analyst_action": (
+                "Confirm that comparable net income and operating cash-flow "
+                "data are available."
+            ),
+            "metrics": {},
+        }
+
+    def is_number(value: Any) -> bool:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    signal_metrics = earnings_signal.get("metrics", {})
+    derived_metrics = derived_financial_metrics.get("metrics", {})
+
+    net_income_growth = signal_metrics.get("net_income_growth_pct")
+    operating_cash_flow_growth = signal_metrics.get(
+        "operating_cash_flow_growth_pct"
+    )
+
+    growth_gap = (
+        net_income_growth - operating_cash_flow_growth
+        if is_number(net_income_growth)
+        and is_number(operating_cash_flow_growth)
+        else None
+    )
+
+    net_margin = derived_metrics.get("net_margin_pct")
+    operating_cash_flow_margin = derived_metrics.get(
+        "operating_cash_flow_margin_pct"
+    )
+    cash_conversion = derived_metrics.get(
+        "cash_conversion_of_earnings"
+    )
+
+    margin_gap = (
+        net_margin - operating_cash_flow_margin
+        if is_number(net_margin)
+        and is_number(operating_cash_flow_margin)
+        else None
+    )
+
+    # ------------------------------------------------------------
+    # Latest-period evidence
+    # ------------------------------------------------------------
+    observed_evidence = []
+
+    if is_number(net_income_growth):
+        observed_evidence.append(
+            f"Net income grew {net_income_growth:.2f}% in the latest "
+            "fiscal year."
+        )
+
+    if is_number(operating_cash_flow_growth):
+        observed_evidence.append(
+            f"Operating cash flow grew "
+            f"{operating_cash_flow_growth:.2f}% over the same period."
+        )
+
+    if is_number(growth_gap):
+        observed_evidence.append(
+            "Net income growth exceeded operating cash-flow growth by "
+            f"{growth_gap:.2f} percentage points."
+        )
+
+    if is_number(cash_conversion):
+        observed_evidence.append(
+            "Operating cash flow represented "
+            f"{cash_conversion:.2f}x reported net income."
+        )
+
+    if (
+        is_number(net_margin)
+        and is_number(operating_cash_flow_margin)
+    ):
+        observed_evidence.append(
+            f"Net margin was {net_margin:.2f}% versus an operating "
+            f"cash-flow margin of {operating_cash_flow_margin:.2f}%."
+        )
+
+    # ------------------------------------------------------------
+    # Multi-year cash-conversion history
+    # ------------------------------------------------------------
+    metric_trends = (
+        (trend_context or {}).get("metric_trends", {})
+    )
+
+    net_income_series = (
+        metric_trends
+        .get("net_income", {})
+        .get("series", [])
+    )
+
+    cash_flow_series = (
+        metric_trends
+        .get("operating_cash_flow", {})
+        .get("series", [])
+    )
+
+    net_income_by_period = {
+        str(item.get("period")): item.get("value")
+        for item in net_income_series
+        if item.get("period") is not None
+    }
+
+    cash_conversion_series = []
+
+    for item in cash_flow_series:
+        period = str(item.get("period"))
+        cash_flow_value = item.get("value")
+        net_income_value = net_income_by_period.get(period)
+
+        if (
+            is_number(cash_flow_value)
+            and is_number(net_income_value)
+            and net_income_value > 0
+        ):
+            cash_conversion_series.append(
+                {
+                    "period": period,
+                    "ratio": round(
+                        cash_flow_value / net_income_value,
+                        2,
+                    ),
+                }
+            )
+
+    historical_context = {
+        "label": "Insufficient history",
+        "latest_ratio": (
+            round(cash_conversion, 2)
+            if is_number(cash_conversion)
+            else None
+        ),
+        "prior_median_ratio": None,
+        "prior_min_ratio": None,
+        "prior_max_ratio": None,
+        "interpretation": (
+            "There is not enough aligned history to assess whether the "
+            "latest cash-conversion level is unusual."
+        ),
+    }
+
+    if len(cash_conversion_series) >= 3:
+        ratios = [
+            item["ratio"]
+            for item in cash_conversion_series
+        ]
+
+        latest_ratio = ratios[-1]
+        prior_ratios = ratios[:-1]
+        sorted_prior = sorted(prior_ratios)
+        midpoint = len(sorted_prior) // 2
+
+        if len(sorted_prior) % 2 == 0:
+            prior_median = (
+                sorted_prior[midpoint - 1]
+                + sorted_prior[midpoint]
+            ) / 2
+        else:
+            prior_median = sorted_prior[midpoint]
+
+        prior_min = min(prior_ratios)
+        prior_max = max(prior_ratios)
+
+        if latest_ratio < prior_min:
+            historical_label = "Below historical range"
+            historical_interpretation = (
+                f"The latest cash-conversion ratio of {latest_ratio:.2f}x "
+                f"is below the prior historical range of "
+                f"{prior_min:.2f}x to {prior_max:.2f}x."
+            )
+
+        elif latest_ratio > prior_max:
+            historical_label = "Above historical range"
+            historical_interpretation = (
+                f"The latest cash-conversion ratio of {latest_ratio:.2f}x "
+                f"is above the prior historical range of "
+                f"{prior_min:.2f}x to {prior_max:.2f}x."
+            )
+
+        else:
+            historical_label = "Within historical range"
+            historical_interpretation = (
+                f"The latest cash-conversion ratio of {latest_ratio:.2f}x "
+                f"remains within the prior historical range of "
+                f"{prior_min:.2f}x to {prior_max:.2f}x and compares with "
+                f"a prior median of {prior_median:.2f}x."
+            )
+
+        historical_context = {
+            "label": historical_label,
+            "latest_ratio": round(latest_ratio, 2),
+            "prior_median_ratio": round(prior_median, 2),
+            "prior_min_ratio": round(prior_min, 2),
+            "prior_max_ratio": round(prior_max, 2),
+            "interpretation": historical_interpretation,
+        }
+
+    # ------------------------------------------------------------
+    # Historical materiality and recent cash-conversion pattern
+    # ------------------------------------------------------------
+    recent_cash_conversion_pattern = {
+        "label": "Insufficient history",
+        "interpretation": (
+            "There is not enough recent history to assess the direction "
+            "of cash conversion."
+        ),
+    }
+
+    if len(cash_conversion_series) >= 4:
+        recent_ratios = [
+            item["ratio"]
+            for item in cash_conversion_series[-4:]
+        ]
+
+        decreasing_steps = sum(
+            current_ratio < previous_ratio
+            for previous_ratio, current_ratio
+            in zip(recent_ratios, recent_ratios[1:])
+        )
+
+        increasing_steps = sum(
+            current_ratio > previous_ratio
+            for previous_ratio, current_ratio
+            in zip(recent_ratios, recent_ratios[1:])
+        )
+
+        if decreasing_steps == len(recent_ratios) - 1:
+            recent_cash_conversion_pattern = {
+                "label": "Persistent recent decline",
+                "interpretation": (
+                    "Cash conversion has declined across each of the "
+                    f"latest {len(recent_ratios)} available fiscal periods, "
+                    f"from {recent_ratios[0]:.2f}x to "
+                    f"{recent_ratios[-1]:.2f}x."
+                ),
+            }
+
+        elif increasing_steps == len(recent_ratios) - 1:
+            recent_cash_conversion_pattern = {
+                "label": "Persistent recent improvement",
+                "interpretation": (
+                    "Cash conversion has improved across each of the "
+                    f"latest {len(recent_ratios)} available fiscal periods, "
+                    f"from {recent_ratios[0]:.2f}x to "
+                    f"{recent_ratios[-1]:.2f}x."
+                ),
+            }
+
+        else:
+            recent_cash_conversion_pattern = {
+                "label": "Mixed recent trend",
+                "interpretation": (
+                    "Cash conversion has shown a mixed pattern across the "
+                    f"latest {len(recent_ratios)} available fiscal periods."
+                ),
+            }
+
+    if historical_context.get("label") == "Below historical range":
+        latest_ratio = historical_context.get("latest_ratio")
+        prior_min_ratio = historical_context.get("prior_min_ratio")
+
+        if (
+            is_number(latest_ratio)
+            and is_number(prior_min_ratio)
+            and prior_min_ratio > 0
+        ):
+            shortfall_pct = (
+                (prior_min_ratio - latest_ratio)
+                / prior_min_ratio
+                * 100
+            )
+
+            if shortfall_pct < 10:
+                historical_context["label"] = (
+                    "Slightly below historical range"
+                )
+                historical_context[
+                    "shortfall_vs_prior_min_pct"
+                ] = round(shortfall_pct, 2)
+                historical_context["interpretation"] = (
+                    f"The latest cash-conversion ratio of "
+                    f"{latest_ratio:.2f}x is only modestly below the "
+                    f"prior historical minimum of "
+                    f"{prior_min_ratio:.2f}x, a shortfall of "
+                    f"{shortfall_pct:.2f}%."
+                )
+
+    # ------------------------------------------------------------
+    # Cash-conversion posture
+    # ------------------------------------------------------------
+    if not is_number(cash_conversion):
+        cash_conversion_posture = "Unavailable"
+    elif cash_conversion >= 1.0:
+        cash_conversion_posture = "Strong"
+    elif cash_conversion >= 0.80:
+        cash_conversion_posture = "Broadly supportive"
+    elif cash_conversion >= 0.60:
+        cash_conversion_posture = "Moderate"
+    else:
+        cash_conversion_posture = "Weak"
+
+    # ------------------------------------------------------------
+    # Diagnostic interpretation
+    # ------------------------------------------------------------
+    if (
+        earnings_signal.get("status") == "Normal"
+        and is_number(cash_conversion)
+        and cash_conversion >= 0.80
+        and (
+            not is_number(growth_gap)
+            or abs(growth_gap) <= 15
+        )
+    ):
+        interpretation = (
+            "Earnings growth and operating cash-flow growth remain broadly "
+            "aligned, while cash conversion is supportive of reported "
+            "earnings. The available evidence does not currently indicate "
+            "a material deterioration in earnings quality."
+        )
+
+    elif (
+        is_number(cash_conversion)
+        and cash_conversion < 0.60
+    ):
+        interpretation = (
+            "Operating cash flow is materially below reported net income, "
+            "which weakens cash support for earnings and warrants further "
+            "review of working-capital movements and non-cash adjustments."
+        )
+
+    elif (
+        is_number(growth_gap)
+        and growth_gap > 25
+    ):
+        interpretation = (
+            "Net income growth is materially stronger than operating "
+            "cash-flow growth. The divergence warrants review even though "
+            "a single period does not establish poor earnings quality."
+        )
+
+    else:
+        interpretation = (
+            "The available evidence presents a mixed earnings-quality "
+            "picture. Profitability and cash-generation metrics should be "
+            "reviewed together before drawing a stronger conclusion."
+        )
+
+    historical_label = historical_context.get("label")
+
+    if historical_label == "Within historical range":
+        interpretation += (
+            " The latest cash-conversion level also remains within the "
+            "company's prior historical range, which reduces the evidence "
+            "of an unusual structural deterioration."
+        )
+
+    elif historical_label == "Slightly below historical range":
+        interpretation += (
+            " The latest cash-conversion level is only modestly below the "
+            "company's prior historical range, which does not by itself "
+            "represent a material break from historical experience."
+        )
+
+    elif historical_label == "Below historical range":
+        interpretation += (
+            " The latest cash-conversion level is materially below the "
+            "company's prior historical range, strengthening the case for "
+            "further analyst review."
+        )
+
+    elif historical_label == "Above historical range":
+        interpretation += (
+            " The latest cash-conversion level is above the company's "
+            "prior historical range, providing stronger cash support for "
+            "reported earnings in the current period."
+        )
+
+    recent_pattern_label = recent_cash_conversion_pattern.get("label")
+
+    if recent_pattern_label == "Persistent recent decline":
+        interpretation += (
+            " However, cash conversion has declined across several "
+            "consecutive fiscal periods, so the direction of travel "
+            "warrants continued monitoring."
+        )
+
+    elif recent_pattern_label == "Persistent recent improvement":
+        interpretation += (
+            " The recent multi-year direction is improving, which provides "
+            "additional support for the current earnings-quality assessment."
+        )
+
+    # ------------------------------------------------------------
+    # Evidence gaps and analyst action
+    # ------------------------------------------------------------
+    evidence_gaps = [
+        (
+            "Working-capital reconciliation explaining the bridge between "
+            "net income and operating cash flow."
+        ),
+        (
+            "Material non-cash adjustments such as depreciation, "
+            "stock-based compensation and deferred taxes."
+        ),
+        (
+            "One-off timing effects or other operating cash-flow "
+            "reclassification items."
+        ),
+    ]
+
+    if is_number(margin_gap) and margin_gap > 10:
+        evidence_gaps.append(
+            "Drivers of the gap between net margin and operating "
+            "cash-flow margin."
+        )
+
+    if cash_conversion_posture in {"Weak", "Moderate"}:
+        analyst_action = (
+            "Review the operating cash-flow reconciliation, working-capital "
+            "movements and material non-cash adjustments. Escalate if cash "
+            "conversion remains weak or the profit-to-cash-flow divergence "
+            "widens across future periods."
+        )
+    else:
+        analyst_action = (
+            "Continue monitoring cash conversion, working-capital movements "
+            "and non-cash adjustments. Escalate only if operating cash flow "
+            "begins to materially lag reported earnings."
+        )
+
+    return {
+        "status": earnings_signal.get("status"),
+        "cash_conversion_posture": cash_conversion_posture,
+        "observed_evidence": observed_evidence,
+        "historical_context": historical_context,
+        "recent_cash_conversion_pattern": recent_cash_conversion_pattern,
+        "interpretation": interpretation,
+        "evidence_gaps": evidence_gaps,
+        "analyst_action": analyst_action,
+        "metrics": {
+            "net_income_growth_pct": net_income_growth,
+            "operating_cash_flow_growth_pct": operating_cash_flow_growth,
+            "growth_divergence_pp": (
+                round(growth_gap, 2)
+                if is_number(growth_gap)
+                else None
+            ),
+            "net_margin_pct": net_margin,
+            "operating_cash_flow_margin_pct": (
+                operating_cash_flow_margin
+            ),
+            "margin_gap_pp": (
+                round(margin_gap, 2)
+                if is_number(margin_gap)
+                else None
+            ),
+            "cash_conversion_of_earnings": cash_conversion,
+            "cash_conversion_series": cash_conversion_series,
+        },
+    }
+
+
 def liquidity_leverage_signal(
     current: dict[str, Any],
     previous: dict[str, Any],
@@ -2512,6 +3008,12 @@ def analyze_financial_intelligence(
         trend_context,
     )
 
+    earnings_quality_diagnostic = _build_earnings_quality_diagnostic(
+        signals,
+        derived_financial_metrics,
+        trend_context,
+    )
+
     executive_assessment = _build_executive_assessment(
         signals,
         trend_context=trend_context,
@@ -2639,6 +3141,7 @@ def analyze_financial_intelligence(
         "signals": signals,
         "derived_financial_metrics": derived_financial_metrics,
         "working_capital_diagnostic": working_capital_diagnostic,
+        "earnings_quality_diagnostic": earnings_quality_diagnostic,
         "review_priorities": priorities,
         "disclaimer": (
             "Signals are analytical heuristics intended to support review. "
