@@ -139,6 +139,211 @@ def accounting_integrity_signal(
     )
 
 
+
+def _build_derived_financial_metrics(
+    current: dict[str, Any],
+    previous: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Build reusable analyst-oriented financial ratios from standardized
+    financial-statement data.
+
+    These metrics are deterministic calculations intended to support
+    downstream diagnostics, peer comparison and evidence-grounded AI
+    explanations.
+    """
+
+    def number(value: Any) -> float | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        return None
+
+    def safe_ratio(
+        numerator: Any,
+        denominator: Any,
+    ) -> float | None:
+        numerator_value = number(numerator)
+        denominator_value = number(denominator)
+
+        if (
+            numerator_value is None
+            or denominator_value is None
+            or denominator_value == 0
+        ):
+            return None
+
+        return numerator_value / denominator_value
+
+    def average_balance(
+        current_value: Any,
+        previous_value: Any,
+    ) -> float | None:
+        current_number = number(current_value)
+        previous_number = number(previous_value)
+
+        if current_number is None or previous_number is None:
+            return None
+
+        return (current_number + previous_number) / 2
+
+    def pct(value: float | None) -> float | None:
+        if value is None:
+            return None
+        return round(value * 100, 2)
+
+    def multiple(value: float | None) -> float | None:
+        if value is None:
+            return None
+        return round(value, 2)
+
+    revenue = current.get("revenue")
+    net_income = current.get("net_income")
+    operating_cash_flow = current.get("operating_cash_flow")
+
+    total_assets = current.get("total_assets")
+    total_equity = current.get("total_equity")
+
+    average_assets = average_balance(
+        total_assets,
+        previous.get("total_assets"),
+    )
+
+    average_equity = average_balance(
+        total_equity,
+        previous.get("total_equity"),
+    )
+
+    net_margin = safe_ratio(
+        net_income,
+        revenue,
+    )
+
+    operating_cash_flow_margin = safe_ratio(
+        operating_cash_flow,
+        revenue,
+    )
+
+    cash_conversion_of_earnings = safe_ratio(
+        operating_cash_flow,
+        net_income,
+    )
+
+    return_on_assets = safe_ratio(
+        net_income,
+        average_assets,
+    )
+
+    return_on_equity = safe_ratio(
+        net_income,
+        average_equity,
+    )
+
+    inventory_intensity = safe_ratio(
+        current.get("inventory"),
+        revenue,
+    )
+
+    receivables_intensity = safe_ratio(
+        current.get("accounts_receivable"),
+        revenue,
+    )
+
+    current_ratio = safe_ratio(
+        current.get("current_assets"),
+        current.get("current_liabilities"),
+    )
+
+    debt_to_assets = safe_ratio(
+        current.get("total_debt"),
+        total_assets,
+    )
+
+    debt_to_equity = safe_ratio(
+        current.get("total_debt"),
+        total_equity,
+    )
+
+    cash_to_debt = safe_ratio(
+        current.get("cash_and_equivalents"),
+        current.get("total_debt"),
+    )
+
+    metrics = {
+        "net_margin_pct": pct(net_margin),
+        "operating_cash_flow_margin_pct": pct(
+            operating_cash_flow_margin
+        ),
+        "cash_conversion_of_earnings": multiple(
+            cash_conversion_of_earnings
+        ),
+        "return_on_assets_pct": pct(return_on_assets),
+        "return_on_equity_pct": pct(return_on_equity),
+        "inventory_intensity_pct": pct(inventory_intensity),
+        "receivables_intensity_pct": pct(receivables_intensity),
+        "current_ratio": multiple(current_ratio),
+        "debt_to_assets_pct": pct(debt_to_assets),
+        "debt_to_equity": multiple(debt_to_equity),
+        "cash_to_debt": multiple(cash_to_debt),
+    }
+
+    available_metrics = [
+        key
+        for key, value in metrics.items()
+        if value is not None
+    ]
+
+    missing_metrics = [
+        key
+        for key, value in metrics.items()
+        if value is None
+    ]
+
+    return {
+        "metrics": metrics,
+        "available_metrics": available_metrics,
+        "missing_metrics": missing_metrics,
+        "methodology": {
+            "net_margin": "Net income / revenue",
+            "operating_cash_flow_margin": (
+                "Operating cash flow / revenue"
+            ),
+            "cash_conversion_of_earnings": (
+                "Operating cash flow / net income"
+            ),
+            "return_on_assets": (
+                "Net income / average total assets"
+            ),
+            "return_on_equity": (
+                "Net income / average total equity"
+            ),
+            "inventory_intensity": "Inventory / revenue",
+            "receivables_intensity": (
+                "Accounts receivable / revenue"
+            ),
+            "current_ratio": (
+                "Current assets / current liabilities"
+            ),
+            "debt_to_assets": "Total debt / total assets",
+            "debt_to_equity": "Total debt / total equity",
+            "cash_to_debt": (
+                "Cash and cash equivalents / total debt"
+            ),
+        },
+        "notes": [
+            (
+                "ROA and ROE use average opening and closing balance-sheet "
+                "values when both periods are available."
+            ),
+            (
+                "Metrics are analytical ratios derived from standardized "
+                "financial-statement data and are not investment advice."
+            ),
+        ],
+    }
+
+
 def working_capital_signal(
     current: dict[str, Any],
     previous: dict[str, Any],
@@ -2252,6 +2457,11 @@ def analyze_financial_intelligence(
     manipulation, or accounting misconduct.
     """
 
+    derived_financial_metrics = _build_derived_financial_metrics(
+        current,
+        previous,
+    )
+
     signals = [
         accounting_integrity_signal(current),
         working_capital_signal(current, previous),
@@ -2427,6 +2637,7 @@ def analyze_financial_intelligence(
         "executive_assessment": executive_assessment,
         "status_counts": status_counts,
         "signals": signals,
+        "derived_financial_metrics": derived_financial_metrics,
         "working_capital_diagnostic": working_capital_diagnostic,
         "review_priorities": priorities,
         "disclaimer": (
