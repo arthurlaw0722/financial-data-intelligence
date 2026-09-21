@@ -1,375 +1,421 @@
-# FinData Verifier Agent
+# Financial Data Intelligence
 
-FinData Verifier Agent is a CROO CAP-powered financial dataset verification agent.
+A financial analysis application that retrieves standardized annual 10-K financial data from SEC EDGAR, verifies the underlying dataset, surfaces multi-year financial signals, and supports evidence-grounded investigation with an AI Financial Analyst.
 
-It checks CSV and Kaggle datasets for data quality risks before they are used by downstream AI agents, machine learning models, research agents, or financial decision-making workflows.
-
----
-
-## Problem
-
-AI agents increasingly use external datasets to train models, generate research, and support business decisions.
-
-However, many datasets contain hidden risks such as missing values, duplicate rows, outliers, severe class imbalance, or possible target leakage.
-
-In financial workflows, bad data can lead to bad models, unreliable reports, and poor business decisions.
+**Live Application:**  
+https://financial-data-intelligence.streamlit.app
 
 ---
 
-## Solution
+## Overview
 
-FinData Verifier Agent checks a dataset and produces an explainable verification report.
+Financial statements contain much more information than a single year's revenue or profit figure.
 
-The agent analyses a CSV dataset and returns:
+The challenge is turning raw filing data into a structured analytical workflow that can answer questions such as:
 
-* Dataset profile
-* Missing value analysis
-* Duplicate row detection
-* Outlier-heavy column detection
-* Class imbalance detection
-* Possible target leakage detection
-* Dataset trust score
-* Markdown verification report
-* JSON summary
-* SHA256 dataset fingerprint
-* SHA256 report hash
-* Execution timestamp
+- Is the underlying financial dataset reliable?
+- Are revenue, earnings, and operating cash flow moving consistently?
+- Is working capital showing unusual behaviour?
+- Is liquidity or leverage becoming a concern?
+- Is a recent movement unusual relative to the company's own history?
+- What additional evidence would an analyst need before drawing a stronger conclusion?
 
-This allows another AI agent to decide whether to accept or reject a dataset before using it.
+Financial Data Intelligence combines deterministic financial analysis with an AI explanation layer while keeping the supporting evidence visible.
 
 ---
 
-## Why CROO CAP
-
-CROO CAP enables AI agents to be discovered, hired, paid, and verified through a decentralized agent marketplace.
-
-FinData Verifier Agent fits this workflow because it acts as a specialist verification service provider.
+## Workflow
 
 ```text
-Buyer Agent
-    |
-    | hires verification service through CROO CAP
-    v
-FinData Verifier Agent
-    |
-    | analyses dataset
-    v
-Trust Report + Proof Hash
-    |
-    | verified output
-    v
-Downstream ML / Research Agent
+US-listed company ticker
+        ↓
+SEC EDGAR Company Facts
+        ↓
+Standardized annual 10-K financial dataset
+        ↓
+Financial Data Verification
+        ↓
+Multi-Year Financial Intelligence
+        ↓
+Deterministic Financial Signals
+        ↓
+AI Financial Analyst
+        ↓
+Evidence-Grounded Analyst Review
 ```
 
-Each verification job produces a report and proof hash, making the result easier to audit and verify.
+---
+
+## Core Features
+
+### 1. SEC EDGAR Integration
+
+Enter a US-listed company ticker to retrieve and standardize annual financial statement data from SEC EDGAR Company Facts.
+
+The pipeline supports up to 10 fiscal years of history and standardizes key financial metrics including:
+
+- Revenue
+- Net income
+- Operating cash flow
+- Accounts receivable
+- Inventory
+- Cash and equivalents
+- Total assets
+- Total liabilities
+- Total equity
+- Current assets
+- Current liabilities
+- Total debt
+
+The SEC mapping layer handles multiple XBRL concepts and converts them into a consistent analytical schema.
 
 ---
 
-## Key Features
+### 2. Financial Data Verification
 
-* CSV dataset verification
-* Missing value detection
-* Duplicate row detection
-* Outlier detection
-* Class imbalance detection
-* Possible target leakage detection
-* Explainable dataset trust score
-* Business-friendly readiness recommendation
-* Markdown report generation
-* JSON summary output
-* SHA256 dataset fingerprint
-* SHA256 report hash
-* Streamlit demo UI
-* CROO Python SDK provider integration
-* Agent-to-agent composability demo
+Before financial analysis begins, the application verifies the retrieved dataset.
+
+Checks include:
+
+- Dataset completeness
+- Duplicate-row detection
+- Financial statement structure
+- Standardized metric coverage
+- Dataset trust assessment
+- Decision-readiness guidance
+- SHA256 dataset fingerprint
+- Canonical report hash
+
+This creates a verifiable evidence layer before downstream financial analysis is performed.
 
 ---
 
-## Demo Dataset
+### 3. Multi-Year Financial Intelligence
 
-The demo uses the Kaggle Credit Card Fraud Detection dataset.
+The application analyses both recent movements and longer-term financial patterns.
 
-Dataset reference:
+It evaluates four core analytical areas.
+
+#### Accounting Integrity
+
+Checks whether the accounting relationship between assets, liabilities, and equity reconciles within the configured tolerance.
+
+#### Working Capital
+
+Compares movements in:
+
+- Revenue
+- Accounts receivable
+- Inventory
+
+This helps identify situations where receivables or inventory are moving materially differently from revenue.
+
+#### Earnings Quality
+
+Compares net income growth with operating cash flow growth to identify potential earnings and cash-flow divergence.
+
+#### Liquidity & Leverage
+
+Evaluates indicators including:
+
+- Current ratio
+- Debt / assets
+- Debt / equity
+- Cash / debt
+- Debt growth
+- Cash growth
+
+These are general analytical screening rules rather than company-specific covenant tests.
+
+---
+
+## Historical Context
+
+A large one-year movement does not automatically imply structural deterioration.
+
+The system therefore compares recent movements with the company's historical financial record.
+
+Historical analysis includes:
+
+- Latest year-over-year growth
+- Recent 3-year CAGR
+- Full-period CAGR
+- Historical range
+- Historical median
+- Recent step-up or step-down patterns
+
+This helps distinguish between a significant recent movement and a genuine break from historical behaviour.
+
+---
+
+## Executive Assessment
+
+Financial signals are translated into an executive-level analytical view.
+
+The application provides:
+
+- Overall assessment
+- Principal financial watchpoint
+- Cross-statement posture
+- Multi-year momentum
+- Next-year historical scenario
+- Review posture
+- Balance-sheet posture
+- Supporting evidence
+- Recommended analyst next step
+
+Signal statuses include:
+
+- `Normal`
+- `Review`
+- `High Attention`
+
+These statuses are analytical screening outputs, not investment recommendations.
+
+---
+
+## Working Capital Diagnostic
+
+When a material working-capital signal is detected, the application performs a deeper diagnostic.
+
+For example, if inventory growth materially exceeds revenue growth, the system can evaluate:
+
+- Inventory vs. revenue growth divergence
+- Inventory intensity
+- Historical inventory range
+- Historical median
+- Receivables alignment
+- Operating cash-flow generation
+- Evidence still required for further review
+
+This helps distinguish a concentrated working-capital issue from broader financial deterioration.
+
+---
+
+## Financial Position Analysis
+
+The application also evaluates the latest balance-sheet position using financial ratios including:
+
+- Current ratio
+- Debt / assets
+- Debt / equity
+- Cash / debt
+
+These ratios support the liquidity and leverage assessment and provide additional context for interpreting other financial signals.
+
+---
+
+## Next Fiscal Year Outlook
+
+The application generates a moderated historical scenario for:
+
+- Revenue
+- Net income
+- Operating cash flow
+
+For each metric, it displays:
+
+- Latest value
+- Direction
+- Moderated growth assumption
+- Base outlook
+- Indicative range
+
+The outlook is derived from historical financial trends.
+
+It is **not company guidance and not an investment forecast**.
+
+---
+
+## AI Financial Analyst
+
+The application includes a Gemini-powered AI Financial Analyst.
+
+Users can ask questions about the financial analysis currently displayed, for example:
+
+> What is the main financial watchpoint and what evidence supports it?
+
+The AI receives structured context generated by the deterministic financial intelligence engine, including:
+
+- Overall assessment
+- Financial signals
+- Historical context
+- Diagnostic evidence
+- Cross-statement reasoning
+- Balance-sheet context
+- Evidence gaps
+
+The AI layer is designed to explain and investigate the existing analysis rather than independently invent financial conclusions.
+
+When the available SEC data is insufficient to support a stronger conclusion, the analyst identifies the additional evidence required for further review.
+
+---
+
+## Deterministic Analysis + Generative AI
+
+The project deliberately separates two analytical layers.
+
+### Deterministic Financial Engine
+
+Financial calculations, ratios, historical comparisons, thresholds, and signal classifications are calculated directly from structured financial data.
+
+### AI Explanation Layer
+
+The language model receives the deterministic analysis as structured context and converts it into an interactive analyst-style explanation.
+
+This design reduces the risk of allowing a generative AI model to replace the underlying financial logic.
+
+The workflow is therefore:
 
 ```text
-mlg-ulb/creditcardfraud
-```
-
-This dataset is suitable because it is finance-related and contains a strong class imbalance, which is common in real fraud detection problems.
-
----
-
-## Example Output
-
-```text
-Trust Score: 75/100
-Trust Grade: Medium Trust
-
-Key Risks:
-- Outlier-heavy columns
-- Class imbalance
-
-Class Imbalance:
-- Target column: Class
-- Minority class ratio: 0.0017
-- Is imbalanced: True
-
-Possible Target Leakage:
-- No obvious leakage risk detected
-
-Verification Proof:
-- Dataset fingerprint: SHA256 hash
-- Report hash: SHA256 hash
-- Execution timestamp: UTC timestamp
+Retrieve
+→ Standardize
+→ Verify
+→ Calculate
+→ Detect
+→ Contextualize
+→ Explain
 ```
 
 ---
 
-## A2A Composability Demo
+## Evidence and Auditability
 
-This project includes a simple buyer-agent simulation.
+Each verified dataset produces cryptographic evidence including:
 
-```bash
-python3 examples/buyer_agent_demo.py
-```
+- SHA256 dataset fingerprint
+- Canonical verification report hash
 
-Demo flow:
-
-```text
-Buyer Agent
-    |
-    | requests dataset verification
-    v
-FinData Verifier Agent
-    |
-    | returns trust score and report
-    v
-Model Builder Agent
-    |
-    | accepts or rejects dataset
-    v
-Train model only if dataset is trusted enough
-```
-
-Decision rule:
-
-* If trust score is greater than or equal to 70, the downstream agent can proceed with model experimentation.
-* If trust score is below 70, the downstream agent rejects the dataset until risks are fixed.
-
-This demonstrates how one AI agent can hire another specialist verification agent before executing a higher-risk financial or machine learning workflow.
+This provides a reproducible link between the financial data analysed and the verification output produced by the application.
 
 ---
 
-## Target Leakage Safety Gate Demo
+## Technology Stack
 
-This demo shows how FinData Verifier Agent prevents a downstream model from training on a dataset with target leakage.
-
-```bash
-python3 examples/leakage_gate_demo.py
-```
-
-The sample loan dataset intentionally includes `approved_status`, a column that reveals the final approval outcome.
-
-The agent detects the leakage and returns:
-
-```text
-Leakage Risks: 2
-Decision: BLOCK_DOWNSTREAM_TRAINING
-Suspicious column: approved_status
-```
-
-This demonstrates that FinData Verifier Agent is not only a data checker. It acts as a safety gate before higher-risk financial AI workflows begin.
-
----
-
-## Production Readiness Layer
-
-The agent translates technical data risks into business-friendly readiness guidance.
-
-Example:
-
-```text
-ML Readiness: Medium
-Business Decision Readiness: Low
-Main reason: Severe class imbalance and possible data risks
-Recommended next step: resampling, leakage review, and validation before production use
-```
-
----
-
-## CROO CAP Integration
-
-The project includes a CROO Python SDK provider.
-
-Run the provider:
-
-```bash
-python3 -m agent.cap_provider
-```
-
-The provider connects to CROO, listens for paid verification jobs, runs the FinData verification pipeline, and delivers a JSON-compatible result containing:
-
-* Trust score
-* Trust grade
-* Markdown report
-* Dataset fingerprint
-* Report hash
-* Execution timestamp
-
-Required environment variables:
-
-```bash
-CROO_API_URL=https://api.croo.network
-CROO_WS_URL=wss://api.croo.network/ws
-CROO_SDK_KEY=your_croo_sdk_key
-```
-
-For safety, these should be stored in a local `.env` file. The `.env` file should never be committed to GitHub.
-
----
-
-## CROO SDK Methods Used
-
-The provider uses the CROO Python SDK to:
-
-- `AgentClient(...)` creates the provider client with CROO API, WebSocket, and SDK credentials.
-- `connect_websocket()` opens the provider connection.
-- `accept_negotiation(...)` accepts a new verification job.
-- `get_order(...)` retrieves the paid order requirements.
-- `deliver_order(...)` sends the verification result back to CROO.
-- `EventType.NEGOTIATION_CREATED` and `EventType.ORDER_PAID` handle the negotiation and paid-order workflow.
-
-
----
-
-## Streamlit Demo
-
-Run the local UI:
-
-```bash
-streamlit run app/streamlit_app.py
-```
-
-Then upload a CSV file, enter the target column, and run verification.
-
-For the credit card fraud demo:
-
-```text
-Target column: Class
-Dataset name: Credit Card Fraud Detection
-```
-
-The UI displays:
-
-* Dataset preview
-* Trust score
-* Trust grade
-* Full markdown report
-* Download button for report.md
-
----
-
-## Command Line Demo
-
-Run the verifier from terminal:
-
-```bash
-python3 run_agent.py --csv data/creditcard.csv --dataset-name "Credit Card Fraud Detection" --target Class
-```
-
-Generated outputs:
-
-```text
-outputs/report.md
-outputs/summary.json
-outputs/proof.json
-```
-
----
-
-## Installation
-
-Create a virtual environment:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
+- Python
+- Streamlit
+- pandas
+- NumPy
+- SEC EDGAR Company Facts API
+- XBRL financial concepts
+- Google Gemini
+- SHA256 cryptographic hashing
+- Git / GitHub
 
 ---
 
 ## Project Structure
 
 ```text
-findata-verifier-agent/
-|
-├── agent/
-│   ├── analyzer.py
-│   ├── scoring.py
-│   ├── leakage.py
-│   ├── report_generator.py
-│   ├── proof.py
-│   ├── readiness.py
-│   └── cap_provider.py
-|
-├── app/
-│   └── streamlit_app.py
-|
-├── examples/
-│   ├── sample_request.json
-│   └── buyer_agent_demo.py
-|
-├── outputs/
-│   ├── report.md
-│   ├── summary.json
-│   └── proof.json
-|
-├── run_agent.py
-├── requirements.txt
-├── README.md
-├── LICENSE
-└── demo_script.md
+app/
+    streamlit_app.py
+
+analytics/
+    financial_intelligence.py
+    financial_statement_adapter.py
+    financial_context.py
+    ai_financial_analyst.py
+    profiler.py
+    statistics.py
+    visualizations.py
+
+data_sources/
+    sec_edgar.py
+    sec_financial_mapper.py
+
+agent/
+    analyzer.py
+    scoring.py
+    readiness.py
 ```
 
 ---
 
-## Tech Stack
+## Running Locally
 
-* Python
-* pandas
-* numpy
-* scikit-learn
-* Streamlit
-* Kaggle API
-* CROO Python SDK
-* SHA256 proof hashing
+Clone the repository and install the dependencies:
 
----
+```bash
+pip install -r requirements.txt
+```
 
-## Track
+Configure the required environment variables:
 
-Primary track:
+```bash
+export SEC_USER_AGENT="Your Name your-email@example.com"
+export GEMINI_API_KEY="your_gemini_api_key"
+```
+
+Then run:
+
+```bash
+streamlit run app/streamlit_app.py
+```
+
+Open the local Streamlit URL and enter a US-listed company ticker such as:
 
 ```text
-Data & Verification Agents
+NVDA
+AAPL
+GOOGL
+MSFT
 ```
-
-Secondary track:
-
-```text
-Research & Intelligence Agents
-```
-
-This project focuses on financial data verification, business analytics, and safe downstream AI workflows.
 
 ---
 
-## License
+## Application Workflow
 
-MIT License
+1. Enter a **US-listed company ticker**.
+2. Retrieve standardized annual 10-K financial data from **SEC EDGAR**.
+3. Review **Overview** and **Explore** to inspect the standardized financial statements and multi-year history.
+4. Open **Verification** to assess data quality, financial statement structure, trust, and SHA256 integrity.
+5. Open **Financial Intelligence** to review accounting integrity, working capital, earnings quality, liquidity & leverage, multi-year trends, and the next-year historical scenario.
+6. Use the **AI Financial Analyst** to investigate questions grounded in verified financial analysis and supporting evidence.
+7. Review the **SHA256 Proof & Report** for the verification record and evidence trail.
+
+---
+
+## Design Principle
+
+The purpose of this project is not to send financial numbers directly to a language model and ask it to generate an unsupported opinion.
+
+Instead, financial data first passes through structured retrieval, standardization, verification, deterministic calculations, historical contextualization, and signal detection.
+
+Generative AI is then used as an interactive explanation and investigation layer on top of that evidence.
+
+This keeps the core financial logic inspectable while still allowing users to interact naturally with the analysis.
+
+---
+
+## Limitations
+
+The application currently focuses on standardized annual SEC Company Facts data.
+
+Important limitations include:
+
+- Financial signals use general analytical heuristics rather than industry-specific thresholds.
+- SEC XBRL concepts may differ between issuers or reporting periods.
+- Standardized Company Facts data does not contain all qualitative information available in a full 10-K filing.
+- Management commentary, segment disclosures, debt maturity schedules, inventory ageing, cost of revenue, covenant details, and other contextual evidence may be required for a complete review.
+- Historical relationships do not necessarily continue into future periods.
+- The next-year outlook is a scenario based on historical financial data rather than a prediction of future company performance.
+- AI-generated explanations remain grounded in the available analytical context and should not replace professional financial analysis.
+
+The application is designed for analytical exploration and portfolio demonstration and does not provide investment advice.
+
+---
+
+## Author
+
+**Arthur Law**
+
+BSc Finance and Technology — **First Class Honours**  
+Incoming MSc Business Analytics — **University College London**
+
+Interests include:
+
+- Financial Technology
+- Data & AI Applications
+- Financial Analytics
+- Digital Products
+- Technology Transformation
