@@ -410,7 +410,7 @@ The application is designed for analytical exploration and portfolio demonstrati
 **Arthur Law**
 
 BSc Finance and Technology — **First Class Honours**  
-Incoming MSc Business Analytics — **University College London**
+MSc Business Analytics — **University College London**
 
 Interests include:
 
