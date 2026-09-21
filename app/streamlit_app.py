@@ -128,8 +128,8 @@ def render_header():
     st.markdown(
         (
             '<div class="subtitle">'
-            "Verify financial data, surface meaningful risk signals, "
-            "and support safer analytical decisions."
+            "Retrieve standardized annual 10-K financials from SEC EDGAR, "
+            "verify the data, surface multi-year financial signals, and investigate the evidence with an AI financial analyst."
             "</div>"
         ),
         unsafe_allow_html=True,
@@ -137,11 +137,11 @@ def render_header():
 
     st.markdown(
         """
-        <span class="badge">Financial Data Verification</span>
-        <span class="badge">Financial Statement Analysis</span>
-        <span class="badge">ML Readiness & Benchmarking</span>
-        <span class="badge">Target Leakage Guard</span>
-        <span class="badge">Analyst Decision Support</span>
+        <span class="badge">SEC EDGAR Integration</span>
+    <span class="badge">Financial Data Verification</span>
+        <span class="badge">Multi-Year Financial Intelligence</span>
+        <span class="badge">AI Financial Analyst</span>
+    <span class="badge">SHA256 Evidence Trail</span>
         """,
         unsafe_allow_html=True,
     )
@@ -203,21 +203,11 @@ def load_dataset(uploaded_file):
 
 
 def render_configuration():
-    st.subheader("Dataset configuration")
+    st.subheader("SEC Filing Lookup")
 
-    data_source = st.radio(
-        "Data source",
-        [
-            "Upload CSV",
-            "SEC Public Filing",
-        ],
-        horizontal=True,
-        key="data_source_mode",
-        help=(
-            "Upload your own dataset or retrieve standardized "
-            "annual financial data from SEC EDGAR."
-        ),
-    )
+    # Public portfolio mode currently focuses on the SEC filing workflow.
+    # The CSV workflow remains implemented below and can be re-enabled later.
+    data_source = "SEC Public Filing"
 
     uploaded_file = None
     df = None
@@ -330,7 +320,7 @@ def render_configuration():
     # =====================================================
     # SEC EDGAR SOURCE
     # =====================================================
-    sec_col1, sec_col2 = st.columns([1.35, 1])
+    sec_col1 = st.container()
 
     with sec_col1:
         ticker = st.text_input(
@@ -347,7 +337,7 @@ def render_configuration():
         )
 
         st.caption(
-            "Retrieve standardized annual 10-K financial data "
+            "Retrieve and standardize annual 10-K financial statement data "
             "from SEC EDGAR Company Facts."
         )
 
@@ -420,43 +410,13 @@ def render_configuration():
             "Click Load SEC filing to retrieve the new company."
         )
 
-    with sec_col2:
-        if sec_result is None:
-            st.selectbox(
-                "Target column",
-                ["None / No target"],
-                disabled=True,
-                key="sec_target_column_disabled",
-            )
+    target_column = ""
 
-            st.text_input(
-                "Dataset name",
-                value="",
-                disabled=True,
-                key="sec_dataset_name_empty",
-            )
-
-        else:
-            target_column = ""
-
-            dataset_name = (
-                f"{sec_result['company_name']} "
-                "— SEC Annual Financials"
-            )
-
-            st.selectbox(
-                "Target column",
-                ["None / No target"],
-                disabled=True,
-                key="sec_target_column_loaded",
-            )
-
-            st.text_input(
-                "Dataset name",
-                value=dataset_name,
-                disabled=True,
-                key="sec_dataset_name_loaded",
-            )
+    dataset_name = (
+        f"{sec_result['company_name']} — SEC Annual Financials"
+        if sec_result is not None
+        else ""
+    )
 
     if sec_result is not None:
         sec_df = sec_result["dataframe"].copy()
@@ -1275,13 +1235,13 @@ def render_getting_started():
     st.subheader("Getting started")
     st.markdown(
         """
-1. **Upload a CSV dataset.**
-2. Optionally select a **target column** if you are doing supervised machine learning.
-3. Review **Overview**, **Explore**, and **Target Analysis** where relevant.
-4. Open **Verification** to check data quality, leakage risk, readiness, and integrity.
-5. For multi-period financial statement data, open **Financial Intelligence** to review accounting, working-capital, earnings-quality, and liquidity signals.
-6. For supervised transaction or modelling datasets, open **Machine Learning** to benchmark classification models after verification.
-7. Review the **SHA256 Proof & Report** for the verification record.
+1. Enter a **US-listed company ticker** to retrieve standardized annual 10-K financial data from **SEC EDGAR**.
+2. Review **Overview** and **Explore** to inspect the standardized financial statements and multi-year history.
+3. Open **Verification** to assess data quality, financial-statement structure, trust, and SHA256 integrity.
+4. Open **Financial Intelligence** to review accounting integrity, working capital, earnings quality, liquidity & leverage, multi-year trends, and the next-year scenario.
+5. Use the **AI Financial Analyst** to investigate questions grounded in the verified financial analysis and supporting evidence.
+6. Review the **SHA256 Proof & Report** for the verification record and evidence trail.
+
         """
     )
 
