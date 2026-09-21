@@ -1741,28 +1741,6 @@ Examples of recognised metrics include `revenue`,
             display: none !important;
         }
 
-        /* Visible resize-grip hint */
-        div[data-testid="stPopoverBody"]::after {
-            content: "Resize";
-            position: absolute;
-            left: 13px;
-            bottom: 9px;
-
-            color: #8b93a1;
-            font-size: 11px;
-            font-weight: 600;
-            line-height: 1;
-            letter-spacing: 0.02em;
-
-            background: transparent;
-            border: none;
-            padding: 0;
-            box-shadow: none;
-
-            pointer-events: none;
-            user-select: none;
-            z-index: 10;
-        }
 
         div[data-testid="stChatMessage"] {
             border-radius: 14px;
@@ -1803,7 +1781,7 @@ Examples of recognised metrics include `revenue`,
 
             if not chat_history:
                 st.info(
-                    "Try asking: Why is inventory the main watchpoint?"
+                    "Example question: Why is inventory the main watchpoint?"
                 )
 
             for message in chat_history[-8:]:
