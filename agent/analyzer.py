@@ -19,6 +19,37 @@ def basic_profile(df: pd.DataFrame) -> dict:
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     categorical_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
 
+    latest_period_missing_ratio = None
+    latest_period_missing_columns = []
+
+    if "period" in df.columns and len(df) > 0:
+        period_values = pd.to_datetime(df["period"], errors="coerce")
+
+        if period_values.notna().any():
+            latest_index = period_values.idxmax()
+        else:
+            latest_index = df.index[-1]
+
+        financial_value_columns = list(numeric_cols)
+
+        if financial_value_columns:
+            latest_row = df.loc[
+                latest_index,
+                financial_value_columns,
+            ]
+
+            latest_period_missing_columns = [
+                col
+                for col in financial_value_columns
+                if pd.isna(latest_row[col])
+            ]
+
+            latest_period_missing_ratio = round(
+                len(latest_period_missing_columns)
+                / len(financial_value_columns),
+                4,
+            )
+
     return {
         "rows": rows,
         "columns": cols,
@@ -26,6 +57,8 @@ def basic_profile(df: pd.DataFrame) -> dict:
         "numeric_columns": numeric_cols,
         "categorical_columns": categorical_cols,
         "missing_values_ratio": missing_dict,
+        "latest_period_missing_ratio": latest_period_missing_ratio,
+        "latest_period_missing_columns": latest_period_missing_columns,
         "duplicate_rows": duplicate_rows,
         "duplicate_ratio": round(duplicate_rows / rows, 4) if rows > 0 else 0,
     }

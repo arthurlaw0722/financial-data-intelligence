@@ -2941,6 +2941,397 @@ def _build_forward_looking_executive_conclusion(
     return " ".join(parts)
 
 
+
+def _build_cross_statement_assessment(
+    signals: list[dict[str, Any]],
+    working_capital_diagnostic: dict[str, Any],
+    earnings_quality_diagnostic: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Synthesize evidence across the balance sheet, income statement and
+    cash-flow statement into one analyst-oriented assessment.
+
+    This layer does not replace the underlying diagnostics. It reconciles
+    whether their evidence reinforces, offsets or qualifies one another.
+    """
+
+    def find_signal(area: str) -> dict[str, Any] | None:
+        return next(
+            (
+                signal
+                for signal in signals
+                if signal.get("area") == area
+            ),
+            None,
+        )
+
+    accounting_signal = find_signal("Accounting Integrity")
+    liquidity_signal = find_signal("Liquidity & Leverage")
+
+    accounting_status = (
+        accounting_signal.get("status")
+        if accounting_signal
+        else "Unavailable"
+    )
+
+    liquidity_status = (
+        liquidity_signal.get("status")
+        if liquidity_signal
+        else "Unavailable"
+    )
+
+    working_status = working_capital_diagnostic.get(
+        "status",
+        "Unavailable",
+    )
+
+    earnings_status = earnings_quality_diagnostic.get(
+        "status",
+        "Unavailable",
+    )
+
+    reinforcing_evidence = []
+    offsetting_evidence = []
+    watchpoints = []
+
+    # ------------------------------------------------------------
+    # Accounting integrity
+    # ------------------------------------------------------------
+    if accounting_signal:
+        accounting_interpretation = accounting_signal.get(
+            "interpretation"
+        )
+
+        if accounting_status == "Normal":
+            reinforcing_evidence.append(
+                accounting_interpretation
+                or (
+                    "The balance sheet reconciles within the configured "
+                    "analytical tolerance."
+                )
+            )
+        else:
+            watchpoints.append(
+                accounting_interpretation
+                or "Accounting integrity requires further review."
+            )
+
+    # ------------------------------------------------------------
+    # Working capital
+    # ------------------------------------------------------------
+    working_issue = working_capital_diagnostic.get(
+        "observed_issue"
+    )
+
+    historical_level = working_capital_diagnostic.get(
+        "historical_level_context",
+        {},
+    )
+
+    historical_level_label = historical_level.get("label")
+
+    if working_status in {"Review", "High Attention"}:
+        if working_issue:
+            offsetting_evidence.append(working_issue)
+            watchpoints.append(working_issue)
+
+    if historical_level_label == "Within historical range":
+        historical_interpretation = historical_level.get(
+            "interpretation"
+        )
+
+        if historical_interpretation:
+            reinforcing_evidence.append(
+                historical_interpretation
+            )
+
+    elif historical_level_label in {
+        "Above historical range",
+        "Below historical range",
+    }:
+        historical_interpretation = historical_level.get(
+            "interpretation"
+        )
+
+        if historical_interpretation:
+            offsetting_evidence.append(
+                historical_interpretation
+            )
+
+    # ------------------------------------------------------------
+    # Earnings quality
+    # ------------------------------------------------------------
+    cash_posture = earnings_quality_diagnostic.get(
+        "cash_conversion_posture"
+    )
+
+    earnings_interpretation = earnings_quality_diagnostic.get(
+        "interpretation"
+    )
+
+    if (
+        earnings_status == "Normal"
+        and cash_posture in {"Strong", "Broadly supportive"}
+    ):
+        reinforcing_evidence.append(
+            "Earnings growth and operating cash-flow growth remain "
+            "broadly aligned, while current cash conversion remains "
+            "supportive of reported earnings."
+        )
+    elif earnings_status in {"Review", "High Attention"}:
+        if earnings_interpretation:
+            offsetting_evidence.append(
+                earnings_interpretation
+            )
+            watchpoints.append(
+                earnings_interpretation
+            )
+
+    recent_cash_pattern = earnings_quality_diagnostic.get(
+        "recent_cash_conversion_pattern",
+        {},
+    )
+
+    recent_cash_label = recent_cash_pattern.get("label")
+    recent_cash_interpretation = recent_cash_pattern.get(
+        "interpretation"
+    )
+
+    if recent_cash_label == "Persistent recent decline":
+        if recent_cash_interpretation:
+            offsetting_evidence.append(
+                recent_cash_interpretation
+            )
+
+        watchpoints.append(
+            "Cash conversion has weakened across several consecutive "
+            "fiscal periods."
+        )
+
+    elif recent_cash_label == "Persistent recent improvement":
+        if recent_cash_interpretation:
+            reinforcing_evidence.append(
+                recent_cash_interpretation
+            )
+
+    # ------------------------------------------------------------
+    # Liquidity and leverage
+    # ------------------------------------------------------------
+    if liquidity_signal:
+        liquidity_interpretation = liquidity_signal.get(
+            "interpretation"
+        )
+
+        if liquidity_status == "Normal":
+            reinforcing_evidence.append(
+                liquidity_interpretation
+                or (
+                    "No major liquidity or leverage pressure was detected "
+                    "under the current screening rules."
+                )
+            )
+        else:
+            if liquidity_interpretation:
+                offsetting_evidence.append(
+                    liquidity_interpretation
+                )
+                watchpoints.append(
+                    liquidity_interpretation
+                )
+
+    # Deduplicate while preserving order.
+    reinforcing_evidence = list(
+        dict.fromkeys(reinforcing_evidence)
+    )
+    offsetting_evidence = list(
+        dict.fromkeys(offsetting_evidence)
+    )
+    watchpoints = list(
+        dict.fromkeys(watchpoints)
+    )
+
+    # ------------------------------------------------------------
+    # Overall posture
+    # ------------------------------------------------------------
+    high_attention_count = sum(
+        status == "High Attention"
+        for status in (
+            accounting_status,
+            working_status,
+            earnings_status,
+            liquidity_status,
+        )
+    )
+
+    non_normal_count = sum(
+        status in {"Review", "High Attention"}
+        for status in (
+            accounting_status,
+            working_status,
+            earnings_status,
+            liquidity_status,
+        )
+    )
+
+    if (
+        accounting_status == "High Attention"
+        or liquidity_status == "High Attention"
+        or high_attention_count >= 2
+    ):
+        overall_posture = "Elevated cross-statement concern"
+
+    elif (
+        working_status == "High Attention"
+        and earnings_status == "Normal"
+        and liquidity_status == "Normal"
+    ):
+        overall_posture = "Mixed but currently contained"
+
+    elif non_normal_count == 0:
+        overall_posture = "Broadly supportive"
+
+    elif non_normal_count == 1:
+        overall_posture = "Focused review required"
+
+    else:
+        overall_posture = "Mixed evidence"
+
+    # ------------------------------------------------------------
+    # Executive synthesis
+    # ------------------------------------------------------------
+    severity_rank = {
+        "Normal": 0,
+        "Review": 1,
+        "High Attention": 2,
+    }
+
+    # Select the primary cross-statement watchpoint from the same
+    # normalized component statuses used by the cross-statement assessment.
+    # This avoids inconsistencies between raw signals and diagnostic overrides.
+    primary_cross_candidates = [
+        ("Accounting Integrity", accounting_status),
+        ("Working Capital", working_status),
+        ("Earnings Quality", earnings_status),
+        ("Liquidity & Leverage", liquidity_status),
+    ]
+
+    flagged_primary_candidates = [
+        candidate
+        for candidate in primary_cross_candidates
+        if candidate[1] in {"Review", "High Attention"}
+    ]
+
+    primary_cross_area = (
+        max(
+            flagged_primary_candidates,
+            key=lambda candidate: severity_rank.get(
+                candidate[1],
+                0,
+            ),
+        )[0]
+        if flagged_primary_candidates
+        else None
+    )
+
+    synthesis_parts = []
+
+    if primary_cross_area:
+        if overall_posture in {
+            "Mixed but currently contained",
+            "Focused review required",
+        }:
+            synthesis_parts.append(
+                f"The principal current watchpoint is "
+                f"{primary_cross_area.lower()}. Broader cross-statement "
+                "evidence currently suggests the issue is concentrated "
+                "rather than uniformly spread across all monitored areas."
+            )
+        else:
+            synthesis_parts.append(
+                f"The principal current watchpoint is "
+                f"{primary_cross_area.lower()}, based on the "
+                "highest-severity deterministic signal."
+            )
+
+    if (
+        earnings_status == "Normal"
+        and liquidity_status == "Normal"
+    ):
+        synthesis_parts.append(
+            "Earnings and operating cash-flow growth remain broadly "
+            "aligned, while liquidity and leverage screening remains "
+            "normal, which provides offsetting evidence against a wider "
+            "financial deterioration."
+        )
+
+    if recent_cash_label == "Persistent recent decline":
+        synthesis_parts.append(
+            "However, the multi-period decline in cash conversion "
+            "reduces the strength of that reassurance and warrants "
+            "continued monitoring."
+        )
+
+    if not synthesis_parts:
+        synthesis_parts.append(
+            "The available cross-statement evidence should be reviewed "
+            "together rather than relying on any single financial signal."
+        )
+
+    synthesis = " ".join(synthesis_parts)
+
+    # ------------------------------------------------------------
+    # Analyst action
+    # ------------------------------------------------------------
+    if overall_posture == "Elevated cross-statement concern":
+        analyst_action = (
+            "Prioritize reconciliation of the flagged statement-level "
+            "issues and confirm whether deterioration is spreading across "
+            "cash generation, working capital and balance-sheet resilience."
+        )
+
+    elif overall_posture == "Mixed but currently contained":
+        primary_action_area = (
+            primary_cross_area.lower()
+            if primary_cross_area
+            else "highest-priority"
+        )
+        analyst_action = (
+            f"Prioritize the {primary_action_area} watchpoint while "
+            "continuing to monitor the other statement-level signals. "
+            "Escalate if the issue persists, cash generation materially "
+            "weakens, or additional statement areas begin to deteriorate."
+        )
+
+    elif overall_posture == "Focused review required":
+        analyst_action = (
+            "Investigate the isolated review area while monitoring the "
+            "currently supportive statement-level evidence for any signs "
+            "of broader deterioration."
+        )
+
+    else:
+        analyst_action = (
+            "Continue periodic cross-statement monitoring and investigate "
+            "any future divergence between profitability, cash generation, "
+            "working capital and balance-sheet resilience."
+        )
+
+    return {
+        "overall_posture": overall_posture,
+        "component_statuses": {
+            "accounting_integrity": accounting_status,
+            "working_capital": working_status,
+            "earnings_quality": earnings_status,
+            "liquidity_and_leverage": liquidity_status,
+        },
+        "reinforcing_evidence": reinforcing_evidence,
+        "offsetting_evidence": offsetting_evidence,
+        "watchpoints": watchpoints,
+        "synthesis": synthesis,
+        "analyst_action": analyst_action,
+    }
+
+
 def analyze_financial_intelligence(
     current: dict[str, Any],
     previous: dict[str, Any],
@@ -3014,6 +3405,23 @@ def analyze_financial_intelligence(
         trend_context,
     )
 
+    cross_statement_assessment = _build_cross_statement_assessment(
+        signals,
+        working_capital_diagnostic,
+        earnings_quality_diagnostic,
+    )
+
+    if (
+        decision == "HIGH ATTENTION"
+        and cross_statement_assessment.get("overall_posture")
+        == "Mixed but currently contained"
+    ):
+        summary = (
+            "A material working-capital signal requires analyst review, "
+            "while broader cross-statement evidence does not currently "
+            "indicate widespread financial deterioration."
+        )
+
     executive_assessment = _build_executive_assessment(
         signals,
         trend_context=trend_context,
@@ -3033,6 +3441,25 @@ def analyze_financial_intelligence(
     if liquidity_signal:
         liquidity_metrics = liquidity_signal.get("metrics", {})
 
+        liquidity_interpretation = (
+            liquidity_signal.get("interpretation") or ""
+        )
+
+        trigger_summary = None
+        if (
+            liquidity_signal.get("status")
+            in {"Review", "High Attention"}
+            and liquidity_interpretation
+        ):
+            trigger_summary = (
+                liquidity_interpretation.split(". ", 1)[0].strip()
+            )
+            if (
+                trigger_summary
+                and not trigger_summary.endswith(".")
+            ):
+                trigger_summary += "."
+
         balance_sheet_summary = {
             "status": liquidity_signal.get("status"),
             "current_ratio": liquidity_metrics.get("current_ratio"),
@@ -3041,7 +3468,8 @@ def analyze_financial_intelligence(
             "cash_to_debt": liquidity_metrics.get("cash_to_debt"),
             "debt_growth_pct": liquidity_metrics.get("debt_growth_pct"),
             "cash_growth_pct": liquidity_metrics.get("cash_growth_pct"),
-            "interpretation": liquidity_signal.get("interpretation"),
+            "trigger_summary": trigger_summary,
+            "interpretation": liquidity_interpretation,
         }
 
     executive_assessment["balance_sheet_summary"] = balance_sheet_summary
@@ -3142,6 +3570,7 @@ def analyze_financial_intelligence(
         "derived_financial_metrics": derived_financial_metrics,
         "working_capital_diagnostic": working_capital_diagnostic,
         "earnings_quality_diagnostic": earnings_quality_diagnostic,
+        "cross_statement_assessment": cross_statement_assessment,
         "review_priorities": priorities,
         "disclaimer": (
             "Signals are analytical heuristics intended to support review. "

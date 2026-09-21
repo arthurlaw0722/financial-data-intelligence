@@ -16,7 +16,29 @@ def calculate_trust_score(
         penalties.append(f"High duplicate ratio: -{penalty}")
 
     missing_values = profile.get("missing_values_ratio", {})
-    if missing_values:
+    latest_period_missing_ratio = profile.get(
+        "latest_period_missing_ratio"
+    )
+
+    if (
+        workflow == "financial_statement"
+        and latest_period_missing_ratio is not None
+    ):
+        if latest_period_missing_ratio > 0.3:
+            penalty = 15
+            score -= penalty
+            penalties.append(
+                f"Severe latest-period missing values: -{penalty}"
+            )
+
+        elif latest_period_missing_ratio > 0.1:
+            penalty = 8
+            score -= penalty
+            penalties.append(
+                f"Moderate latest-period missing values: -{penalty}"
+            )
+
+    elif missing_values:
         max_missing = max(missing_values.values())
 
         if max_missing > 0.3:

@@ -29,6 +29,10 @@ from analytics.financial_intelligence import (
     _build_next_fiscal_year_outlook,
     _build_forward_looking_executive_conclusion,
 )
+from analytics.financial_context import (
+    build_financial_intelligence_context,
+)
+from analytics.ai_financial_analyst import ask_financial_analyst
 from analytics.financial_statement_adapter import (
     detect_financial_statement_schema,
     prepare_financial_periods,
@@ -1395,6 +1399,18 @@ Examples of recognised metrics include `revenue`,
             )
         )
 
+        financial_intelligence_context = (
+            build_financial_intelligence_context(
+                result=result,
+                periods=periods,
+                trend_context=trend_context,
+                next_fiscal_year_outlook=next_fiscal_year_outlook,
+                forward_looking_conclusion=(
+                    forward_looking_conclusion
+                ),
+            )
+        )
+
     except ValueError as exc:
         st.error(str(exc))
         return
@@ -1712,6 +1728,305 @@ Examples of recognised metrics include `revenue`,
                 st.markdown("**Recommended analyst action**")
                 st.info(analyst_action)
 
+    # Floating AI Financial Analyst chat
+    st.markdown(
+        """
+        <style>
+        .st-key-ai_financial_chat_launcher {
+            position: fixed;
+            right: 1.25rem;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 1000;
+            width: 190px;
+        }
+
+        .st-key-ai_financial_chat_launcher button {
+            border-radius: 999px !important;
+            font-weight: 650 !important;
+            padding-top: 0.65rem !important;
+            padding-bottom: 0.65rem !important;
+            box-shadow: 0 6px 22px rgba(0, 0, 0, 0.14);
+        }
+
+        div[data-testid="stPopoverBody"] {
+            width: 460px;
+            min-width: 360px;
+            max-width: min(80vw, 900px);
+
+            height: min(68vh, 640px);
+            min-height: 420px;
+            max-height: 85vh;
+
+            resize: both;
+            overflow: auto;
+
+            /* Keep the right edge fixed so resizing expands leftward. */
+            position: fixed !important;
+            right: 1.5rem !important;
+            left: auto !important;
+            transform: none !important;
+
+            /* Chrome native resize handle at bottom-left. */
+            direction: rtl;
+        }
+
+        div[data-testid="stPopoverBody"] > * {
+            direction: ltr;
+        }
+
+        /* Hide only the Enter instruction; Enter still submits. */
+        div[data-testid="stPopoverBody"]
+        div[data-testid="InputInstructions"] {
+            display: none !important;
+        }
+
+        /* Visible resize-grip hint */
+        div[data-testid="stPopoverBody"]::after {
+            content: "Resize";
+            position: absolute;
+            left: 13px;
+            bottom: 9px;
+
+            color: #8b93a1;
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 1;
+            letter-spacing: 0.02em;
+
+            background: transparent;
+            border: none;
+            padding: 0;
+            box-shadow: none;
+
+            pointer-events: none;
+            user-select: none;
+            z-index: 10;
+        }
+
+        div[data-testid="stChatMessage"] {
+            border-radius: 14px;
+            padding: 0.45rem 0.65rem;
+            margin-bottom: 0.45rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    ai_context_marker = repr(
+        (
+            financial_intelligence_context.get("overall_assessment"),
+            financial_intelligence_context.get("executive_assessment"),
+            financial_intelligence_context.get("financial_diagnostics"),
+            financial_intelligence_context.get("historical_context"),
+            financial_intelligence_context.get("cross_statement_reasoning"),
+        )
+    )
+
+    if st.session_state.get("ai_financial_context_marker") != ai_context_marker:
+        st.session_state["ai_financial_context_marker"] = ai_context_marker
+        st.session_state["ai_financial_chat"] = []
+
+    with st.container(key="ai_financial_chat_launcher"):
+        with st.popover("💬 AI Financial Analyst"):
+            st.markdown("### AI Financial Analyst")
+            st.caption(
+                "Ask questions about the financial analysis on this page. "
+                "Responses are grounded in the verified Financial Intelligence context."
+            )
+
+            chat_history = st.session_state.setdefault(
+                "ai_financial_chat",
+                [],
+            )
+
+            if not chat_history:
+                st.info(
+                    "Try asking: Why is inventory the main watchpoint?"
+                )
+
+            for message in chat_history[-8:]:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
+
+            with st.form(
+                "ai_financial_chat_form",
+                clear_on_submit=True,
+            ):
+                ai_question = st.text_input(
+                    "Message",
+                    placeholder="Ask about earnings, cash flow, risks...",
+                    label_visibility="collapsed",
+                )
+                ai_send = st.form_submit_button(
+                    "Send",
+                    use_container_width=True,
+                )
+
+            def _set_ai_financial_error(exc, question):
+                error_text = str(exc)
+                error_lower = error_text.lower()
+
+                if (
+                    "503" in error_text
+                    or "unavailable" in error_lower
+                    or "high demand" in error_lower
+                ):
+                    error_type = "busy"
+                    title = "AI Analyst is temporarily busy"
+                    message = (
+                        "Gemini is experiencing high demand right now. "
+                        "Your question has been kept, so you can retry it."
+                    )
+                elif "gemini_api_key" in error_lower:
+                    error_type = "configuration"
+                    title = "AI Analyst is not configured"
+                    message = (
+                        "Gemini API access is not available to this "
+                        "Streamlit process."
+                    )
+                else:
+                    error_type = "request"
+                    title = "AI Analyst could not complete the request"
+                    message = (
+                        "The request could not be completed. "
+                        "Please try again."
+                    )
+
+                st.session_state["ai_financial_error"] = {
+                    "type": error_type,
+                    "title": title,
+                    "message": message,
+                    "question": question,
+                }
+
+
+            if ai_send:
+                clean_ai_question = ai_question.strip()
+
+                if not clean_ai_question:
+                    st.warning("Enter a question first.")
+                else:
+                    chat_history.append(
+                        {
+                            "role": "user",
+                            "content": clean_ai_question,
+                        }
+                    )
+
+                    try:
+                        with st.spinner("Analysing financial context..."):
+                            ai_answer = ask_financial_analyst(
+                                financial_intelligence_context,
+                                clean_ai_question,
+                            )
+
+                    except Exception as exc:
+                        _set_ai_financial_error(
+                            exc,
+                            clean_ai_question,
+                        )
+                    else:
+                        chat_history.append(
+                            {
+                                "role": "assistant",
+                                "content": ai_answer,
+                            }
+                        )
+                        st.session_state.pop(
+                            "ai_financial_error",
+                            None,
+                        )
+
+                    st.session_state["ai_financial_chat"] = chat_history
+                    st.rerun()
+
+
+            ai_error = st.session_state.get("ai_financial_error")
+
+            if ai_error:
+                error_type = ai_error.get("type", "request")
+                error_title = ai_error.get(
+                    "title",
+                    "AI Analyst unavailable",
+                )
+                error_message = ai_error.get(
+                    "message",
+                    "Please try again.",
+                )
+
+                if error_type == "busy":
+                    st.warning(
+                        f"**{error_title}**\n\n{error_message}"
+                    )
+                else:
+                    st.error(
+                        f"**{error_title}**\n\n{error_message}"
+                    )
+
+                retry_question = (
+                    ai_error.get("question") or ""
+                ).strip()
+
+                if retry_question:
+                    st.caption(
+                        f'Ready to retry: "{retry_question}"'
+                    )
+
+                    if st.button(
+                        "↻ Retry",
+                        key="retry_ai_financial_chat",
+                        use_container_width=True,
+                    ):
+                        try:
+                            with st.spinner(
+                                "Retrying financial analysis..."
+                            ):
+                                retry_answer = ask_financial_analyst(
+                                    financial_intelligence_context,
+                                    retry_question,
+                                )
+
+                        except Exception as retry_exc:
+                            _set_ai_financial_error(
+                                retry_exc,
+                                retry_question,
+                            )
+                            st.rerun()
+
+                        else:
+                            chat_history.append(
+                                {
+                                    "role": "assistant",
+                                    "content": retry_answer,
+                                }
+                            )
+
+                            st.session_state[
+                                "ai_financial_chat"
+                            ] = chat_history
+
+                            st.session_state.pop(
+                                "ai_financial_error",
+                                None,
+                            )
+
+                            st.rerun()
+            if chat_history:
+                if st.button(
+                    "Clear conversation",
+                    key="clear_ai_financial_chat",
+                    use_container_width=True,
+                ):
+                    st.session_state["ai_financial_chat"] = []
+                    st.rerun()
+
+            st.caption(
+                "AI explanations are grounded in the deterministic analysis. "
+                "They do not replace analyst review."
+            )
+
     st.markdown("### Overall Assessment")
 
     decision = result["decision"]
@@ -1777,6 +2092,25 @@ Examples of recognised metrics include `revenue`,
         )
     )
 
+    cross_statement = (
+        result.get("cross_statement_assessment")
+        or {}
+    )
+
+    cross_statement_posture = cross_statement.get(
+        "overall_posture"
+    )
+
+    cross_statement_synthesis = cross_statement.get(
+        "synthesis"
+    )
+
+    if cross_statement_posture:
+        st.markdown(
+            f"**Cross-statement posture:** "
+            f"{cross_statement_posture}"
+        )
+
     trend_summary = executive.get("trend_summary")
     primary_review_point = executive.get("primary_review_point")
 
@@ -1819,6 +2153,14 @@ Examples of recognised metrics include `revenue`,
         for direction in outlook_directions
     ):
         scenario_label = "Contraction"
+        scenario_caption = (
+            f"Across {len(outlook_directions)} core metrics"
+        )
+    elif outlook_directions and all(
+        direction == "Broadly stable"
+        for direction in outlook_directions
+    ):
+        scenario_label = "Broadly stable"
         scenario_caption = (
             f"Across {len(outlook_directions)} core metrics"
         )
@@ -1869,11 +2211,32 @@ Examples of recognised metrics include `revenue`,
             f"Debt / Assets {balance_debt_assets:.1f}%"
         )
 
-    balance_sheet_caption = (
-        " · ".join(balance_caption_parts)
-        if balance_caption_parts
-        else "Balance-sheet coverage is limited"
+    balance_debt_growth = balance_sheet_summary.get(
+        "debt_growth_pct"
     )
+    if (
+        balance_sheet_status in {"Review", "High Attention"}
+        and isinstance(balance_debt_growth, (int, float))
+    ):
+        balance_caption_parts.append(
+            f"Debt {balance_debt_growth:+.1f}% YoY"
+        )
+
+    balance_sheet_driver = balance_sheet_summary.get(
+        "trigger_summary"
+    )
+
+    if (
+        balance_sheet_status in {"Review", "High Attention"}
+        and balance_sheet_driver
+    ):
+        balance_sheet_caption = balance_sheet_driver
+    else:
+        balance_sheet_caption = (
+            " · ".join(balance_caption_parts)
+            if balance_caption_parts
+            else "Balance-sheet coverage is limited"
+        )
 
     st.markdown("#### Executive Outlook")
 
@@ -1910,7 +2273,11 @@ Examples of recognised metrics include `revenue`,
             st.markdown(f"**{balance_sheet_label}**")
             st.caption(balance_sheet_caption)
 
-    if trend_summary or forward_looking_conclusion:
+    if (
+        trend_summary
+        or cross_statement_synthesis
+        or forward_looking_conclusion
+    ):
         with st.expander(
             "Executive synthesis",
             expanded=False,
@@ -1918,6 +2285,12 @@ Examples of recognised metrics include `revenue`,
             if trend_summary:
                 st.markdown("**Multi-year context**")
                 st.write(trend_summary)
+
+            if cross_statement_synthesis:
+                st.markdown(
+                    "**Cross-statement context**"
+                )
+                st.write(cross_statement_synthesis)
 
             if forward_looking_conclusion:
                 st.markdown(
